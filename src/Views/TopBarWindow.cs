@@ -81,8 +81,7 @@ namespace MacOSTahoe
             WindowInteropHelper helper = new WindowInteropHelper(this);
             HwndSource src = HwndSource.FromHwnd(helper.Handle);
             if (src != null) src.AddHook(WndProc);
-            // Register Alt+Space (9001) for Quick Search, Win+Shift+A (9002) for Settings Hub
-            NativeMethods.RegisterHotKey(helper.Handle, 9001, 0x0001, 0x20);
+            // Register Win+Shift+A (9002) for Settings Hub (Alt+Space handled in low-level hook)
             NativeMethods.RegisterHotKey(helper.Handle, 9002, 0x0008 | 0x0004, 0x41);
 
             _kbHookProc = new NativeMethods.LowLevelKeyboardProc(KeyboardHookCallback);
@@ -136,6 +135,11 @@ namespace MacOSTahoe
                     }
                     else if (isKeyUp)
                     {
+                        if (_winKeyDown)
+                        {
+                            _otherKeyWhileWin = true;
+                        }
+
                         if (vkCode == 0x09)
                         {
                             bool isAltDown = ((NativeMethods.GetAsyncKeyState(0x12) & 0x8000) != 0) || ((NativeMethods.GetAsyncKeyState(0xA4) & 0x8000) != 0) || ((NativeMethods.GetAsyncKeyState(0xA5) & 0x8000) != 0);
@@ -184,16 +188,27 @@ namespace MacOSTahoe
                         // Hotkey: Alt + Space -> Quick Spotlight Search
                         if (vkCode == 0x20) // Space
                         {
-                            bool isAltDown = ((NativeMethods.GetAsyncKeyState(0x12) & 0x8000) != 0) || ((NativeMethods.GetAsyncKeyState(0xA4) & 0x8000) != 0) || ((NativeMethods.GetAsyncKeyState(0xA5) & 0x8000) != 0);
-                            bool isCtrlDown = ((NativeMethods.GetAsyncKeyState(0x11) & 0x8000) != 0);
-
-                            if (isAltDown && !isCtrlDown)
+                            bool isWinDown = _winKeyDown || ((NativeMethods.GetAsyncKeyState(0x5B) & 0x8000) != 0) || ((NativeMethods.GetAsyncKeyState(0x5C) & 0x8000) != 0);
+                            if (isWinDown)
                             {
-                                Dispatcher.BeginInvoke(new Action(delegate
+                                // Win + Space is Windows language switching: NEVER intercept, let it pass to Windows!
+                                _otherKeyWhileWin = true;
+                            }
+                            else
+                            {
+                                // Must actually have Alt pressed down (WM_SYSKEYDOWN 0x0104 or LLKHF_ALTDOWN 0x20)
+                                bool altFlag = (msg == 0x0104) || ((flags & 0x20) != 0);
+                                bool isAltDown = altFlag && (((NativeMethods.GetAsyncKeyState(0x12) & 0x8000) != 0) || ((NativeMethods.GetAsyncKeyState(0xA4) & 0x8000) != 0));
+                                bool isCtrlDown = ((NativeMethods.GetAsyncKeyState(0x11) & 0x8000) != 0);
+
+                                if (isAltDown && !isCtrlDown)
                                 {
-                                    ShellController.Instance.ToggleSpotlight();
-                                }));
-                                return (IntPtr)1;
+                                    Dispatcher.BeginInvoke(new Action(delegate
+                                    {
+                                        ShellController.Instance.ToggleSpotlight();
+                                    }));
+                                    return (IntPtr)1;
+                                }
                             }
                         }
 
@@ -337,12 +352,7 @@ namespace MacOSTahoe
             if (msg == 0x0312)
             {
                 int id = wParam.ToInt32();
-                if (id == 9001)
-                {
-                    ShellController.Instance.ToggleSpotlight();
-                    handled = true;
-                }
-                else if (id == 9002)
+                if (id == 9002)
                 {
                     ShellController.Instance.ShowLauncherSettings();
                     handled = true;
