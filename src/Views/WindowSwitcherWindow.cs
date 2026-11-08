@@ -5,35 +5,32 @@ using System.Globalization;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.ComTypes;
 using System.Text;
-using System.Text.RegularExpressions;
-using System.Threading;
-using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
-using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
-using System.Windows.Shapes;
-using System.Windows.Threading;
 using Microsoft.Win32;
-using IOPath = System.IO.Path;
-using WpfPath = System.Windows.Shapes.Path;
 
 namespace MacOSTahoe
 {
     public class WindowSwitcherWindow : Window
     {
         private StackPanel _spacesStack;
-        private WrapPanel _windowsWrap;
+        private StackPanel _windowsHost;
         private TextBlock _subTitle;
+        private Border _groupByAppBtn;
         private int _currentSpaceIndex = 0;
+        private bool _groupByApp = false;
+
+        private OpenWindowEntry _draggedWindow = null;
+        private Point _dragStartPoint;
+        private bool _isDragging = false;
+        private Popup _spaceMenuPopup;
 
         public WindowSwitcherWindow()
         {
@@ -47,7 +44,7 @@ namespace MacOSTahoe
             Top = 0;
             Width = SystemParameters.PrimaryScreenWidth;
             Height = SystemParameters.PrimaryScreenHeight;
-            Background = new SolidColorBrush(Color.FromArgb(208, 10, 12, 18));
+            Background = new SolidColorBrush(Color.FromArgb(215, 10, 12, 18));
             FontFamily = LiquidGlassTheme.UiFont;
 
             BuildUI();
@@ -66,6 +63,26 @@ namespace MacOSTahoe
                     e.Handled = true;
                     Hide();
                 }
+                else if (e.Key == Key.Left)
+                {
+                    e.Handled = true;
+                    if (_currentSpaceIndex > 0)
+                    {
+                        _currentSpaceIndex--;
+                        ShellController.Instance.SwitchToSpace(_currentSpaceIndex);
+                        RefreshSpacesBar();
+                    }
+                }
+                else if (e.Key == Key.Right)
+                {
+                    e.Handled = true;
+                    if (ShellController.Instance.Config.Spaces != null && _currentSpaceIndex < ShellController.Instance.Config.Spaces.Count - 1)
+                    {
+                        _currentSpaceIndex++;
+                        ShellController.Instance.SwitchToSpace(_currentSpaceIndex);
+                        RefreshSpacesBar();
+                    }
+                }
             };
         }
 
@@ -81,31 +98,28 @@ namespace MacOSTahoe
             {
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(0, 36, 0, 0),
-                Width = Math.Min(1360, Width - 60)
+                Margin = new Thickness(0, 32, 0, 0),
+                Width = Math.Min(1380, Width - 50)
             };
 
-            // =========================================================================
-            // 1. TOP SPACES BAR (Полоса виртуальных рабочих столов — Spaces)
-            // =========================================================================
+            // 1. TOP SPACES BAR
             Border spacesContainer = new Border
             {
-                Background = LiquidGlassTheme.CreateGlassBrush(140, 180),
+                Background = LiquidGlassTheme.CreateGlassBrush(145, 185),
                 BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush(),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(18),
                 Padding = new Thickness(16, 10, 16, 12),
-                Margin = new Thickness(0, 0, 0, 16)
+                Margin = new Thickness(0, 0, 0, 14)
             };
 
             StackPanel spacesPanel = new StackPanel();
 
-            // Spaces Header
             Grid spacesHeaderGrid = new Grid { Margin = new Thickness(0, 0, 0, 8) };
             TextBlock spacesLabel = new TextBlock
             {
-                Text = "ПРОСТРАНСТВА И РАБОЧИЕ СТОЛЫ (SPACES)",
-                FontSize = 11,
+                Text = "ПРОСТРАНСТВА И РАБОЧИЕ СТОЛЫ (SPACES — ДО 16 СТОЛОВ)",
+                FontSize = 10.5,
                 FontWeight = FontWeights.Bold,
                 Foreground = new SolidColorBrush(Color.FromArgb(170, 235, 235, 245)),
                 HorizontalAlignment = HorizontalAlignment.Left
@@ -130,10 +144,8 @@ namespace MacOSTahoe
             spacesContainer.Child = spacesPanel;
             container.Children.Add(spacesContainer);
 
-            // =========================================================================
             // 2. MISSION CONTROL HEADER & ACTIONS
-            // =========================================================================
-            Grid header = new Grid { Margin = new Thickness(12, 0, 12, 14) };
+            Grid header = new Grid { Margin = new Thickness(12, 0, 12, 12) };
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -147,8 +159,8 @@ namespace MacOSTahoe
             });
             _subTitle = new TextBlock
             {
-                Text = "Все открытые окна на экране — нажмите на окно для переключения",
-                FontSize = 13,
+                Text = "Все открытые окна на экране — нажмите на окно для переключения или перетащите для разделения экрана",
+                FontSize = 12.5,
                 Foreground = new SolidColorBrush(Color.FromArgb(175, 235, 235, 245)),
                 Margin = new Thickness(0, 2, 0, 0)
             };
@@ -158,8 +170,18 @@ namespace MacOSTahoe
 
             StackPanel actions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
 
+            // Group by App Toggle
+            _groupByAppBtn = CreateActionPill("◫ По приложениям: Выкл", delegate
+            {
+                _groupByApp = !_groupByApp;
+                if (ShellController.Instance != null) ShellController.Instance.Config.MissionControlGroupByApp = _groupByApp;
+                UpdateGroupBtnText();
+                PopulateWindows();
+            });
+            actions.Children.Add(_groupByAppBtn);
+
             // Split View Button
-            Border splitViewBtn = CreateActionPill("◫ Разделение экрана (Split View)", delegate
+            Border splitViewBtn = CreateActionPill("◫ Split View", delegate
             {
                 List<OpenWindowEntry> wins = ShellController.Instance.GetOpenApplicationWindows();
                 if (wins.Count >= 2)
@@ -172,6 +194,7 @@ namespace MacOSTahoe
                     MessageBox.Show("Для режима Split View необходимо как минимум два открытых окна.", "Split View", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
             });
+            splitViewBtn.Margin = new Thickness(8, 0, 0, 0);
             actions.Children.Add(splitViewBtn);
 
             Border minAllBtn = CreateActionPill("🗕 Свернуть все (F11)", delegate
@@ -194,23 +217,32 @@ namespace MacOSTahoe
             header.Children.Add(actions);
             container.Children.Add(header);
 
-            // =========================================================================
-            // 3. WINDOWS GALLERY WRAP
-            // =========================================================================
+            // 3. WINDOWS GALLERY
             ScrollViewer sv = new ScrollViewer
             {
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 MaxHeight = Math.Max(260, Height - 310)
             };
-            _windowsWrap = new WrapPanel
+            _windowsHost = new StackPanel
             {
+                Orientation = Orientation.Vertical,
                 HorizontalAlignment = HorizontalAlignment.Center
             };
-            sv.Content = _windowsWrap;
+            sv.Content = _windowsHost;
             container.Children.Add(sv);
 
             root.Children.Add(container);
             Content = root;
+        }
+
+        private void UpdateGroupBtnText()
+        {
+            if (_groupByAppBtn != null && _groupByAppBtn.Child is TextBlock)
+            {
+                ((TextBlock)_groupByAppBtn.Child).Text = _groupByApp ? "◫ По приложениям: Вкл" : "◫ По приложениям: Выкл";
+                _groupByAppBtn.Background = _groupByApp ? LiquidGlassTheme.AccentBlueBrush : new SolidColorBrush(Color.FromArgb(45, 255, 255, 255));
+            }
         }
 
         private Border CreateActionPill(string text, Action onClick)
@@ -226,7 +258,11 @@ namespace MacOSTahoe
             };
             b.Child = new TextBlock { Text = text, FontSize = 12, FontWeight = FontWeights.Medium, Foreground = Brushes.White };
             b.MouseEnter += delegate { b.Background = LiquidGlassTheme.AccentBlueBrush; };
-            b.MouseLeave += delegate { b.Background = new SolidColorBrush(Color.FromArgb(45, 255, 255, 255)); };
+            b.MouseLeave += delegate
+            {
+                if (b == _groupByAppBtn && _groupByApp) b.Background = LiquidGlassTheme.AccentBlueBrush;
+                else b.Background = new SolidColorBrush(Color.FromArgb(45, 255, 255, 255));
+            };
             b.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
             {
                 e.Handled = true;
@@ -237,6 +273,12 @@ namespace MacOSTahoe
 
         public void ShowAndRefresh()
         {
+            if (ShellController.Instance != null)
+            {
+                _currentSpaceIndex = ShellController.Instance.Config.CurrentSpaceIndex;
+                _groupByApp = ShellController.Instance.Config.MissionControlGroupByApp;
+                UpdateGroupBtnText();
+            }
             RefreshSpacesBar();
             PopulateWindows();
             Show();
@@ -332,6 +374,7 @@ namespace MacOSTahoe
 
                 spaceCard.Child = cardGrid;
 
+                // Left click switches space
                 spaceCard.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
                 {
                     _currentSpaceIndex = index;
@@ -339,49 +382,155 @@ namespace MacOSTahoe
                     RefreshSpacesBar();
                 };
 
+                // Right click opens space wallpaper / options menu
+                spaceCard.MouseRightButtonUp += delegate(object s, MouseButtonEventArgs e)
+                {
+                    ShowSpaceContextMenu(spaceCard, index);
+                };
+
+                // Drop target for moving windows between Spaces
+                spaceCard.MouseEnter += delegate
+                {
+                    if (_isDragging && _draggedWindow != null)
+                    {
+                        spaceCard.BorderBrush = new SolidColorBrush(Color.FromRgb(40, 200, 64));
+                    }
+                };
+                spaceCard.MouseLeave += delegate
+                {
+                    spaceCard.BorderBrush = isActive ? new SolidColorBrush(Color.FromArgb(200, 255, 255, 255)) : new SolidColorBrush(Color.FromArgb(70, 255, 255, 255));
+                };
+                spaceCard.MouseLeftButtonUp += delegate
+                {
+                    if (_isDragging && _draggedWindow != null)
+                    {
+                        _isDragging = false;
+                        ShellController.Instance.MoveWindowToSpace(_draggedWindow.Hwnd, index);
+                        _draggedWindow = null;
+                        PopulateWindows();
+                    }
+                };
+
                 _spacesStack.Children.Add(spaceCard);
             }
 
-            // "+" Button to add new Space
-            Border addBtn = new Border
+            // "+" Button to add new Space (limit up to 16)
+            if (spaces.Count < 16)
             {
-                Width = 44,
-                Height = 84,
-                CornerRadius = new CornerRadius(10),
-                Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(60, 255, 255, 255)),
+                Border addBtn = new Border
+                {
+                    Width = 44,
+                    Height = 84,
+                    CornerRadius = new CornerRadius(10),
+                    Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
+                    BorderBrush = new SolidColorBrush(Color.FromArgb(60, 255, 255, 255)),
+                    BorderThickness = new Thickness(1),
+                    Margin = new Thickness(6, 0, 6, 0),
+                    Cursor = Cursors.Hand,
+                    ToolTip = "Добавить рабочий стол (до 16)"
+                };
+                TextBlock plus = new TextBlock
+                {
+                    Text = "+",
+                    FontSize = 24,
+                    FontWeight = FontWeights.Bold,
+                    Foreground = Brushes.White,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                addBtn.Child = plus;
+                addBtn.MouseEnter += delegate { addBtn.Background = LiquidGlassTheme.AccentBlueBrush; };
+                addBtn.MouseLeave += delegate { addBtn.Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)); };
+                addBtn.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
+                {
+                    e.Handled = true;
+                    ShellController.Instance.CreateNewSpace();
+                    _currentSpaceIndex = ShellController.Instance.Config.Spaces.Count - 1;
+                    RefreshSpacesBar();
+                };
+                _spacesStack.Children.Add(addBtn);
+            }
+        }
+
+        private void ShowSpaceContextMenu(FrameworkElement anchor, int spaceIdx)
+        {
+            if (_spaceMenuPopup != null && _spaceMenuPopup.IsOpen) _spaceMenuPopup.IsOpen = false;
+
+            Popup popup = new Popup
+            {
+                AllowsTransparency = true,
+                PlacementTarget = anchor,
+                Placement = PlacementMode.Bottom,
+                StaysOpen = false,
+                PopupAnimation = PopupAnimation.Fade
+            };
+
+            Border card = new Border
+            {
+                CornerRadius = new CornerRadius(12),
+                Background = LiquidGlassTheme.CreateGlassBrush(230, 245),
+                BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush(),
                 BorderThickness = new Thickness(1),
-                Margin = new Thickness(6, 0, 6, 0),
-                Cursor = Cursors.Hand,
-                ToolTip = "Добавить рабочий стол"
+                Padding = new Thickness(6),
+                MinWidth = 210
             };
-            TextBlock plus = new TextBlock
+            card.Effect = new DropShadowEffect { BlurRadius = 18, ShadowDepth = 6, Opacity = 0.55, Color = Colors.Black };
+
+            StackPanel sp = new StackPanel();
+            sp.Children.Add(CreateMenuRow("🖼  Сменить обои для этого стола...", delegate
             {
-                Text = "+",
-                FontSize = 24,
-                FontWeight = FontWeights.Bold,
-                Foreground = Brushes.White,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            addBtn.Child = plus;
-            addBtn.MouseEnter += delegate { addBtn.Background = LiquidGlassTheme.AccentBlueBrush; };
-            addBtn.MouseLeave += delegate { addBtn.Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)); };
-            addBtn.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
+                OpenFileDialog ofd = new OpenFileDialog
+                {
+                    Title = "Выберите обои для Рабочего стола " + (spaceIdx + 1).ToString(),
+                    Filter = "Изображения (*.jpg;*.jpeg;*.png;*.bmp)|*.jpg;*.jpeg;*.png;*.bmp"
+                };
+                if (ofd.ShowDialog() == true)
+                {
+                    ShellController.Instance.SetSpaceWallpaper(spaceIdx, ofd.FileName);
+                }
+            }));
+
+            if (ShellController.Instance.Config.Spaces.Count > 1)
             {
-                e.Handled = true;
-                ShellController.Instance.CreateNewSpace();
-                _currentSpaceIndex = ShellController.Instance.Config.Spaces.Count - 1;
-                RefreshSpacesBar();
+                sp.Children.Add(new Border { Height = 1, Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)), Margin = new Thickness(4, 3, 4, 3) });
+                sp.Children.Add(CreateMenuRow("✕  Удалить этот рабочий стол", delegate
+                {
+                    ShellController.Instance.CloseSpace(spaceIdx);
+                    RefreshSpacesBar();
+                }));
+            }
+
+            card.Child = sp;
+            popup.Child = card;
+            _spaceMenuPopup = popup;
+            popup.IsOpen = true;
+        }
+
+        private Border CreateMenuRow(string text, Action onClick)
+        {
+            Border b = new Border
+            {
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(10, 5, 10, 5),
+                Background = Brushes.Transparent,
+                Cursor = Cursors.Hand
             };
-            _spacesStack.Children.Add(addBtn);
+            b.Child = new TextBlock { Text = text, FontSize = 12, Foreground = Brushes.White };
+            b.MouseEnter += delegate { b.Background = LiquidGlassTheme.AccentBlueBrush; };
+            b.MouseLeave += delegate { b.Background = Brushes.Transparent; };
+            b.MouseLeftButtonDown += delegate
+            {
+                if (_spaceMenuPopup != null) _spaceMenuPopup.IsOpen = false;
+                if (onClick != null) onClick();
+            };
+            return b;
         }
 
         private void PopulateWindows()
         {
-            _windowsWrap.Children.Clear();
+            _windowsHost.Children.Clear();
             List<OpenWindowEntry> wins = ShellController.Instance.GetOpenApplicationWindows();
-            _subTitle.Text = string.Format("Открыто окон: {0} — нажмите на карточку для переключения или перетащите для разделения экрана", wins.Count);
+            _subTitle.Text = string.Format("Открыто окон: {0} — нажмите для переключения или перетащите окно на другое для Split View", wins.Count);
 
             if (wins.Count == 0)
             {
@@ -393,7 +542,8 @@ namespace MacOSTahoe
                     BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush(),
                     BorderThickness = new Thickness(1),
                     Padding = new Thickness(24),
-                    Margin = new Thickness(0, 40, 0, 0)
+                    Margin = new Thickness(0, 40, 0, 0),
+                    HorizontalAlignment = HorizontalAlignment.Center
                 };
                 emptyCard.Child = new TextBlock
                 {
@@ -402,15 +552,68 @@ namespace MacOSTahoe
                     Foreground = Brushes.White,
                     TextAlignment = TextAlignment.Center
                 };
-                _windowsWrap.Children.Add(emptyCard);
+                _windowsHost.Children.Add(emptyCard);
                 return;
             }
 
-            for (int i = 0; i < wins.Count; i++)
+            if (_groupByApp)
             {
-                OpenWindowEntry win = wins[i];
-                Border card = CreateWindowCard(win);
-                _windowsWrap.Children.Add(card);
+                // Group by Process / App Title
+                Dictionary<string, List<OpenWindowEntry>> groups = new Dictionary<string, List<OpenWindowEntry>>(StringComparer.OrdinalIgnoreCase);
+                for (int i = 0; i < wins.Count; i++)
+                {
+                    OpenWindowEntry w = wins[i];
+                    string key = !string.IsNullOrEmpty(w.AppTitle) ? w.AppTitle : w.ProcessName;
+                    List<OpenWindowEntry> list;
+                    if (!groups.TryGetValue(key, out list))
+                    {
+                        list = new List<OpenWindowEntry>();
+                        groups[key] = list;
+                    }
+                    list.Add(w);
+                }
+
+                foreach (KeyValuePair<string, List<OpenWindowEntry>> pair in groups)
+                {
+                    StackPanel grpStack = new StackPanel { Margin = new Thickness(0, 8, 0, 14) };
+
+                    // Group Header banner
+                    StackPanel grpHeader = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(16, 0, 0, 8) };
+                    Image grpIcon = new Image
+                    {
+                        Width = 20,
+                        Height = 20,
+                        Source = pair.Value[0].Icon != null ? pair.Value[0].Icon : ShellController.Instance.DefaultAppIcon,
+                        Margin = new Thickness(0, 0, 8, 0)
+                    };
+                    RenderOptions.SetBitmapScalingMode(grpIcon, BitmapScalingMode.HighQuality);
+                    grpHeader.Children.Add(grpIcon);
+                    grpHeader.Children.Add(new TextBlock
+                    {
+                        Text = string.Format("{0} ({1})", pair.Key, pair.Value.Count),
+                        FontSize = 14,
+                        FontWeight = FontWeights.Bold,
+                        Foreground = Brushes.White
+                    });
+                    grpStack.Children.Add(grpHeader);
+
+                    WrapPanel grpWrap = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Center };
+                    for (int j = 0; j < pair.Value.Count; j++)
+                    {
+                        grpWrap.Children.Add(CreateWindowCard(pair.Value[j]));
+                    }
+                    grpStack.Children.Add(grpWrap);
+                    _windowsHost.Children.Add(grpStack);
+                }
+            }
+            else
+            {
+                WrapPanel wrap = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Center };
+                for (int i = 0; i < wins.Count; i++)
+                {
+                    wrap.Children.Add(CreateWindowCard(wins[i]));
+                }
+                _windowsHost.Children.Add(wrap);
             }
         }
 
@@ -418,9 +621,9 @@ namespace MacOSTahoe
         {
             Border card = new Border
             {
-                Width = 270,
-                Height = 175,
-                Margin = new Thickness(12),
+                Width = 260,
+                Height = 168,
+                Margin = new Thickness(10),
                 CornerRadius = new CornerRadius(16),
                 Background = LiquidGlassTheme.CreateGlassBrush(180, 210),
                 BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush(),
@@ -440,7 +643,7 @@ namespace MacOSTahoe
             grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(32) });
             grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
-            // Card Header: Icon + Title + Close Button
+            // Card Header
             Grid cardHeader = new Grid();
             cardHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
             cardHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -492,7 +695,7 @@ namespace MacOSTahoe
             {
                 e.Handled = true;
                 NativeMethods.PostMessage(win.Hwnd, 0x0010 /* WM_CLOSE */, IntPtr.Zero, IntPtr.Zero);
-                _windowsWrap.Children.Remove(card);
+                PopulateWindows();
             };
             Grid.SetColumn(closeBtn, 2);
             cardHeader.Children.Add(closeBtn);
@@ -500,7 +703,7 @@ namespace MacOSTahoe
             Grid.SetRow(cardHeader, 0);
             grid.Children.Add(cardHeader);
 
-            // Card Body (Window thumbnail placeholder representation)
+            // Card Body (Window representation)
             Border body = new Border
             {
                 CornerRadius = new CornerRadius(10),
@@ -535,13 +738,59 @@ namespace MacOSTahoe
             // Hover styling
             card.MouseEnter += delegate
             {
-                card.BorderBrush = LiquidGlassTheme.AccentBlueBrush;
-                card.Background = LiquidGlassTheme.CreateGlassBrush(200, 230);
+                if (_isDragging && _draggedWindow != null && _draggedWindow != win)
+                {
+                    card.BorderBrush = new SolidColorBrush(Color.FromRgb(40, 200, 64)); // Green drop indicator for Split View
+                }
+                else
+                {
+                    card.BorderBrush = LiquidGlassTheme.AccentBlueBrush;
+                    card.Background = LiquidGlassTheme.CreateGlassBrush(200, 230);
+                }
             };
             card.MouseLeave += delegate
             {
                 card.BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush();
                 card.Background = LiquidGlassTheme.CreateGlassBrush(180, 210);
+            };
+
+            // Drag detection: drag onto another card for Split View, or onto a Space card
+            card.PreviewMouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
+            {
+                _dragStartPoint = e.GetPosition(this);
+                _draggedWindow = win;
+                _isDragging = false;
+            };
+
+            card.PreviewMouseMove += delegate(object s, MouseEventArgs e)
+            {
+                if (e.LeftButton == MouseButtonState.Pressed && _draggedWindow == win)
+                {
+                    Point cur = e.GetPosition(this);
+                    if (Math.Abs(cur.X - _dragStartPoint.X) > 10 || Math.Abs(cur.Y - _dragStartPoint.Y) > 10)
+                    {
+                        _isDragging = true;
+                    }
+                }
+            };
+
+            card.MouseLeftButtonUp += delegate(object s, MouseButtonEventArgs e)
+            {
+                if (_isDragging && _draggedWindow != null && _draggedWindow != win)
+                {
+                    // Dropped onto another window card -> Launch Split View!
+                    e.Handled = true;
+                    IntPtr left = _draggedWindow.Hwnd;
+                    IntPtr right = win.Hwnd;
+                    _isDragging = false;
+                    _draggedWindow = null;
+                    Hide();
+                    ShellController.Instance.EnterSplitView(left, right, 0.5);
+                    return;
+                }
+
+                _isDragging = false;
+                _draggedWindow = null;
             };
 
             // Click to activate window

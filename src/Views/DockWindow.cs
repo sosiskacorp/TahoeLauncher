@@ -380,6 +380,31 @@ namespace MacOSTahoe
                 }));
             }
 
+            if (!item.IsSeparator && !item.IsTrash && !item.IsAppsLauncher && !item.IsWindowSwitcher)
+            {
+                int curSpace = ShellController.Instance.Config.CurrentSpaceIndex;
+                int assignedSpace = ShellController.Instance.GetAppSpaceAssignment(item.Name);
+                stack.Children.Add(CreateDockSeparator());
+                stack.Children.Add(CreateDockMenuRow("🖥  Назначить на: Рабочий стол " + (curSpace + 1).ToString(), delegate
+                {
+                    popup.IsOpen = false;
+                    ShellController.Instance.AssignAppToSpace(item.Name, curSpace);
+                }));
+                stack.Children.Add(CreateDockMenuRow("🌐  Назначить на: Все рабочие столы", delegate
+                {
+                    popup.IsOpen = false;
+                    ShellController.Instance.AssignAppToSpace(item.Name, -1);
+                }));
+                if (assignedSpace >= -1)
+                {
+                    stack.Children.Add(CreateDockMenuRow("⚪  Назначить на: Нет (по умолчанию)", delegate
+                    {
+                        popup.IsOpen = false;
+                        ShellController.Instance.ClearAppSpaceAssignment(item.Name);
+                    }));
+                }
+            }
+
             stack.Children.Add(CreateDockSeparator());
             stack.Children.Add(CreateDockMenuRow("⚙  Настройки Dock и лаунчера...", delegate
             {

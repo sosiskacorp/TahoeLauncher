@@ -197,6 +197,52 @@ namespace MacOSTahoe
                             return (IntPtr)1;
                         }
 
+                        // Hotkey: Ctrl + Up -> Mission Control (macOS Standard)
+                        if (vkCode == 0x26)
+                        {
+                            bool isCtrlDown = ((NativeMethods.GetAsyncKeyState(0x11) & 0x8000) != 0);
+                            bool isWinDown = _winKeyDown || ((NativeMethods.GetAsyncKeyState(0x5B) & 0x8000) != 0);
+                            if (isCtrlDown && !isWinDown)
+                            {
+                                Dispatcher.BeginInvoke(new Action(delegate
+                                {
+                                    ShellController.Instance.ToggleWindowSwitcher();
+                                }));
+                                return (IntPtr)1;
+                            }
+                        }
+
+                        // Hotkey: Ctrl + Down -> App Exposé (macOS Standard)
+                        if (vkCode == 0x28)
+                        {
+                            bool isCtrlDown = ((NativeMethods.GetAsyncKeyState(0x11) & 0x8000) != 0);
+                            if (isCtrlDown)
+                            {
+                                Dispatcher.BeginInvoke(new Action(delegate
+                                {
+                                    ShellController.Instance.ToggleAppExpose();
+                                }));
+                                return (IntPtr)1;
+                            }
+                        }
+
+                        // Hotkey: Ctrl + Left / Right -> Switch Spaces
+                        if (vkCode == 0x25 || vkCode == 0x27)
+                        {
+                            bool isCtrlDown = ((NativeMethods.GetAsyncKeyState(0x11) & 0x8000) != 0);
+                            bool isWinDown = _winKeyDown || ((NativeMethods.GetAsyncKeyState(0x5B) & 0x8000) != 0);
+                            if (isCtrlDown && !isWinDown)
+                            {
+                                int diff = (vkCode == 0x27) ? 1 : -1;
+                                Dispatcher.BeginInvoke(new Action(delegate
+                                {
+                                    int target = ShellController.Instance.Config.CurrentSpaceIndex + diff;
+                                    ShellController.Instance.SwitchToSpace(target);
+                                }));
+                                return (IntPtr)1;
+                            }
+                        }
+
                         // Hotkey: Alt + Tab -> macOS Command+Tab App Switcher HUD
                         if (vkCode == 0x09)
                         {
@@ -229,6 +275,22 @@ namespace MacOSTahoe
                         // When App Switcher HUD is open: Q quits, H hides, Esc cancels
                         if (ShellController.Instance.AppSwitcher != null && ShellController.Instance.AppSwitcher.IsVisible)
                         {
+                            if (vkCode == 0x25) // Left arrow -> step back
+                            {
+                                Dispatcher.BeginInvoke(new Action(delegate
+                                {
+                                    ShellController.Instance.ShowAppSwitcher(true);
+                                }));
+                                return (IntPtr)1;
+                            }
+                            if (vkCode == 0x27) // Right arrow -> step forward
+                            {
+                                Dispatcher.BeginInvoke(new Action(delegate
+                                {
+                                    ShellController.Instance.ShowAppSwitcher(false);
+                                }));
+                                return (IntPtr)1;
+                            }
                             if (vkCode == 0x51) // 'Q'
                             {
                                 Dispatcher.BeginInvoke(new Action(delegate
@@ -927,8 +989,8 @@ namespace MacOSTahoe
                 if (wins.Count >= 2)
                     ShellController.Instance.EnterSplitView(wins[0].Hwnd, wins[1].Hwnd, 0.5);
             }));
-            list.Add(CreateDropdownItem("Поместить окно слева", "◧", delegate() { ShellController.Instance.SnapActiveWindow(true); }));
-            list.Add(CreateDropdownItem("Поместить окно справа", "◨", delegate() { ShellController.Instance.SnapActiveWindow(false); }));
+            list.Add(CreateDropdownItem("Поместить окно слева (Split View)", "◧", delegate() { ShellController.Instance.StartSplitViewWithPicker(IntPtr.Zero, true); }));
+            list.Add(CreateDropdownItem("Поместить окно справа (Split View)", "◨", delegate() { ShellController.Instance.StartSplitViewWithPicker(IntPtr.Zero, false); }));
             list.Add(CreateDropdownSeparator());
             list.Add(CreateDropdownItem("Свернуть окно", "", delegate()
             {
@@ -974,6 +1036,11 @@ namespace MacOSTahoe
 
         private void OnPollTick(object sender, EventArgs e)
         {
+            NativeMethods.POINT curPt;
+            if (NativeMethods.GetCursorPos(out curPt))
+            {
+                ShellController.Instance.CheckHotCorners(curPt.X, curPt.Y);
+            }
             NativeMethods.HideNativeTaskbars();
             if (_appBarRegistered && ShellController.Instance.Config.ShowTopBar && SystemParameters.WorkArea.Top < 26)
             {

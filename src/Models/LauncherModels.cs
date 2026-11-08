@@ -68,6 +68,14 @@ namespace MacOSTahoe
         public bool StageManagerAutoCenter { get; set; }
         public List<string> Spaces { get; set; }
         public int CurrentSpaceIndex { get; set; }
+        public List<string> SpaceWallpapers { get; set; }
+        public Dictionary<string, int> AppSpaceAssignments { get; set; }
+        public bool MissionControlGroupByApp { get; set; }
+        public bool EnableHotCorners { get; set; }
+        public string HotCornerTopLeft { get; set; }
+        public string HotCornerTopRight { get; set; }
+        public string HotCornerBottomLeft { get; set; }
+        public string HotCornerBottomRight { get; set; }
         public double DockIconSize { get; set; }
         public double DockZoomRange { get; set; }
         public string QuickNoteText { get; set; }
@@ -92,6 +100,14 @@ namespace MacOSTahoe
             StageManagerAutoCenter = true;
             Spaces = new List<string> { "Рабочий стол 1", "Рабочий стол 2" };
             CurrentSpaceIndex = 0;
+            SpaceWallpapers = new List<string>();
+            AppSpaceAssignments = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            MissionControlGroupByApp = false;
+            EnableHotCorners = true;
+            HotCornerTopLeft = "Mission Control";
+            HotCornerTopRight = "Пункт управления";
+            HotCornerBottomLeft = "Приложения";
+            HotCornerBottomRight = "Рабочий стол";
             DockIconSize = 50.0;
             DockZoomRange = 26.0;
             QuickNoteText = "• Win — Все приложения\r\n• Alt+Пробел — Командный поиск\r\n• ПКМ по иконкам — Настройка Dock";

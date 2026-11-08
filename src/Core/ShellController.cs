@@ -52,6 +52,7 @@ namespace MacOSTahoe
         public StageManagerWindow StageManager;
         public AppSwitcherWindow AppSwitcher;
         public SplitViewDividerWindow SplitViewDivider;
+        public SplitViewPickerWindow SplitViewPicker;
         public List<StageGroup> CurrentStageGroups = new List<StageGroup>();
         public StageGroup ActiveStageGroup = null;
         public List<List<IntPtr>> MergedStageWindows = new List<List<IntPtr>>();
@@ -1221,6 +1222,7 @@ namespace MacOSTahoe
             StageManager = new StageManagerWindow();
             AppSwitcher = new AppSwitcherWindow();
             SplitViewDivider = new SplitViewDividerWindow();
+            SplitViewPicker = new SplitViewPickerWindow();
 
             ApplyModuleVisibility();
 
@@ -1301,6 +1303,7 @@ namespace MacOSTahoe
             if (Launchpad != null && Launchpad.IsVisible) Launchpad.Hide();
             if (WindowSwitcher != null && WindowSwitcher.IsVisible) WindowSwitcher.Hide();
             if (AppSwitcher != null && AppSwitcher.IsVisible) AppSwitcher.Hide();
+            if (SplitViewPicker != null && SplitViewPicker.IsVisible) SplitViewPicker.Hide();
         }
 
         public void ToggleSpotlight()
@@ -1665,20 +1668,45 @@ namespace MacOSTahoe
             }
         }
 
+        public void StartSplitViewWithPicker(IntPtr firstHwnd, bool isLeft)
+        {
+            if (firstHwnd == IntPtr.Zero) firstHwnd = NativeMethods.GetForegroundWindow();
+            if (firstHwnd == IntPtr.Zero || !NativeMethods.IsWindow(firstHwnd)) return;
+
+            double top = (Config.ShowTopBar && TopBar != null) ? 32.0 : 0.0;
+            double dockH = (Config.ShowDock && !Config.DockAutoHide && Dock != null) ? 76.0 : 0.0;
+            double screenW = SystemParameters.PrimaryScreenWidth;
+            double screenH = SystemParameters.PrimaryScreenHeight;
+            double usableH = screenH - top - dockH;
+            double halfW = screenW / 2.0;
+
+            NativeMethods.ShowWindow(firstHwnd, NativeMethods.SW_RESTORE);
+            if (isLeft)
+                NativeMethods.MoveWindow(firstHwnd, 0, (int)top, (int)halfW, (int)usableH, true);
+            else
+                NativeMethods.MoveWindow(firstHwnd, (int)halfW, (int)top, (int)halfW, (int)usableH, true);
+
+            if (SplitViewPicker == null) SplitViewPicker = new SplitViewPickerWindow();
+            SplitViewPicker.ShowPicker(firstHwnd, isLeft);
+        }
+
         public void EnterSplitView(IntPtr leftHwnd, IntPtr rightHwnd, double ratio)
         {
+            if (SplitViewPicker != null && SplitViewPicker.IsVisible) SplitViewPicker.Hide();
             if (SplitViewDivider == null) SplitViewDivider = new SplitViewDividerWindow();
             SplitViewDivider.LeftHwnd = leftHwnd;
             SplitViewDivider.RightHwnd = rightHwnd;
             SplitViewDivider.SplitRatio = ratio;
-            SplitViewDivider.ApplyLayout();
+            SplitViewDivider.IsolateAndApplyLayout();
             SplitViewDivider.Show();
         }
 
         public void ExitSplitView()
         {
+            if (SplitViewPicker != null && SplitViewPicker.IsVisible) SplitViewPicker.Hide();
             if (SplitViewDivider != null && SplitViewDivider.IsVisible)
             {
+                SplitViewDivider.RestoreIsolatedWindows();
                 SplitViewDivider.Hide();
             }
         }
@@ -1751,6 +1779,89 @@ namespace MacOSTahoe
                 NativeMethods.keybd_event(0x5B, 0, 2, UIntPtr.Zero);
                 Thread.Sleep(50);
             }
+
+            if (Config.SpaceWallpapers != null && index < Config.SpaceWallpapers.Count)
+            {
+                string wp = Config.SpaceWallpapers[index];
+                if (!string.IsNullOrEmpty(wp) && File.Exists(wp)) ApplyWallpaperFile(wp);
+            }
+
+        }
+        public void SetSpaceWallpaper(int spaceIndex, string wpPath)
+        {
+            if (Config.SpaceWallpapers == null) Config.SpaceWallpapers = new List<string>();
+            while (Config.SpaceWallpapers.Count <= spaceIndex) Config.SpaceWallpapers.Add("");
+            Config.SpaceWallpapers[spaceIndex] = wpPath;
+            SaveConfig();
+            if (spaceIndex == Config.CurrentSpaceIndex && File.Exists(wpPath)) ApplyWallpaperFile(wpPath);
+        }
+
+        public void MoveWindowToSpace(IntPtr hwnd, int targetSpaceIndex)
+        {
+            if (hwnd == IntPtr.Zero || !NativeMethods.IsWindow(hwnd)) return;
+            if (targetSpaceIndex != Config.CurrentSpaceIndex)
+                NativeMethods.ShowWindow(hwnd, NativeMethods.SW_SHOWMINIMIZED);
+        }
+
+        public void AssignAppToSpace(string appName, int spaceIndex)
+        {
+            if (string.IsNullOrEmpty(appName)) return;
+            if (Config.AppSpaceAssignments == null)
+                Config.AppSpaceAssignments = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            Config.AppSpaceAssignments[appName] = spaceIndex;
+            SaveConfig();
+        }
+
+        public int GetAppSpaceAssignment(string appName)
+        {
+            if (string.IsNullOrEmpty(appName) || Config.AppSpaceAssignments == null) return -1;
+            int s;
+            if (Config.AppSpaceAssignments.TryGetValue(appName, out s)) return s;
+            return -1;
+        }
+
+        public void ClearAppSpaceAssignment(string appName)
+        {
+            if (string.IsNullOrEmpty(appName) || Config.AppSpaceAssignments == null) return;
+            Config.AppSpaceAssignments.Remove(appName);
+            SaveConfig();
+        }
+
+        private DateTime _lastHotCornerTrigger = DateTime.MinValue;
+        public void CheckHotCorners(int mouseX, int mouseY)
+        {
+            if (!Config.EnableHotCorners) return;
+            if ((DateTime.Now - _lastHotCornerTrigger).TotalMilliseconds < 1200) return;
+
+            int screenW = (int)SystemParameters.PrimaryScreenWidth;
+            int screenH = (int)SystemParameters.PrimaryScreenHeight;
+
+            if (mouseX <= 2 && mouseY <= 2)
+            {
+                _lastHotCornerTrigger = DateTime.Now;
+                ToggleWindowSwitcher();
+            }
+            else if (mouseX >= screenW - 3 && mouseY <= 2)
+            {
+                _lastHotCornerTrigger = DateTime.Now;
+                ToggleControlCenter();
+            }
+            else if (mouseX <= 2 && mouseY >= screenH - 3)
+            {
+                _lastHotCornerTrigger = DateTime.Now;
+                ToggleLaunchpad();
+            }
+            else if (mouseX >= screenW - 3 && mouseY >= screenH - 3)
+            {
+                _lastHotCornerTrigger = DateTime.Now;
+                HideActiveStageToDesktop();
+            }
+        }
+
+        public void ToggleAppExpose()
+        {
+            Config.MissionControlGroupByApp = true;
+            ToggleWindowSwitcher();
         }
 
         public void CloseSpace(int index)
