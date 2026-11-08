@@ -1,553 +1,783 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
-using System.Linq;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
-using MacOSTahoe.Core;
-using MacOSTahoe.Models;
-using MacOSTahoe.Native;
-using MacOSTahoe.Services;
-using MacOSTahoe.Theme;
+using Microsoft.Win32;
+using IOPath = System.IO.Path;
+using WpfPath = System.Windows.Shapes.Path;
 
-namespace MacOSTahoe.Views
+namespace MacOSTahoe
 {
     public class DockWindow : Window
     {
-        private StackPanel _dockStack;
-        private Border _glassBorder;
-        private List<DockAppItem> _items = new List<DockAppItem>();
+        private Grid _outerRoot;
+        private Border _glassShelf;
+        private StackPanel _itemsPanel;
+        private Border _tooltipPill;
+        private TextBlock _tooltipText;
+        private TranslateTransform _dockSlideTransform;
+        private Popup _dockContextMenuPopup;
 
-        private DispatcherTimer _pollTimer;
-        private DispatcherTimer _autoHideTimer;
-        private bool _isMouseOverDock = false;
-        private bool _isDockHidden = false;
+        private Stopwatch _stopwatch = Stopwatch.StartNew();
+        private double _lastFrameTime = 0.0;
+        private double _currentSlideY = 0.0;
+        private double _targetSlideY = 0.0;
+        private bool _activeWindowIsMaximized = false;
+        private bool _dockRevealedByMouse = false;
+        private DispatcherTimer _windowScanTimer;
 
-        private double _baseSize = 50.0;
-        private double _zoomRange = 26.0;
-        private const double InfluenceRadius = 140.0;
+        private const double ItemMarginX = 3.5;
+
+        public double ElapsedSeconds
+        {
+            get { return _stopwatch.Elapsed.TotalSeconds; }
+        }
+
+        private double BaseIconSize
+        {
+            get { return ShellController.Instance != null ? ShellController.Instance.Config.DockIconSize : 50.0; }
+        }
+
+        private double MaxIconZoom
+        {
+            get { return ShellController.Instance != null ? ShellController.Instance.Config.DockZoomRange : 26.0; }
+        }
 
         public DockWindow()
         {
-            Title = "DockWindow";
+            Title = "Tahoe Dock";
             WindowStyle = WindowStyle.None;
             AllowsTransparency = true;
-            Background = Brushes.Transparent;
+            ResizeMode = ResizeMode.NoResize;
             Topmost = true;
             ShowInTaskbar = false;
-            ResizeMode = ResizeMode.NoResize;
+            Background = null;
+            FontFamily = LiquidGlassTheme.UiFont;
 
-            _baseSize = ShellController.Instance.Config.DockIconSize;
-            _zoomRange = ShellController.Instance.Config.DockZoomRange;
+            Width = Math.Min(1600, SystemParameters.PrimaryScreenWidth - 40);
+            Height = 152;
+            Left = (SystemParameters.PrimaryScreenWidth - Width) / 2.0;
+            Top = SystemParameters.PrimaryScreenHeight - Height;
 
-            BuildUi();
+            BuildUI();
 
-            SourceInitialized += (s, e) =>
+            SourceInitialized += delegate(object s, EventArgs e)
             {
-                IntPtr hwnd = new WindowInteropHelper(this).Handle;
-                DwmBlurHelper.ApplyBlur(hwnd, ShellController.Instance.Config.IsDarkMode);
-                DwmBlurHelper.MakeToolWindow(hwnd);
+                NativeMethods.MakeToolWindow(this, true);
             };
 
-            Loaded += (s, e) =>
-            {
-                LoadDockItems();
-                PositionDock();
-                StartTimers();
-                CompositionTarget.Rendering += OnRenderTick;
-            };
+            CompositionTarget.Rendering += OnRenderFrame;
 
-            MouseEnter += (s, e) =>
-            {
-                _isMouseOverDock = true;
-                RevealDock();
-            };
-
-            MouseLeave += (s, e) =>
-            {
-                _isMouseOverDock = false;
-                ResetWaveTargets();
-            };
-
-            MouseMove += OnDockMouseMove;
+            _windowScanTimer = new DispatcherTimer();
+            _windowScanTimer.Interval = TimeSpan.FromMilliseconds(600);
+            _windowScanTimer.Tick += OnScanRunningWindows;
+            _windowScanTimer.Start();
+            OnScanRunningWindows(null, EventArgs.Empty);
         }
 
-        private void BuildUi()
+        private void BuildUI()
         {
-            _glassBorder = new Border
+            _outerRoot = new Grid();
+            _outerRoot.Background = null;
+            _outerRoot.ClipToBounds = false;
+            _dockSlideTransform = new TranslateTransform(0, 0);
+            _outerRoot.RenderTransform = _dockSlideTransform;
+
+            _glassShelf = new Border();
+            _glassShelf.Height = BaseIconSize + 14;
+            _glassShelf.HorizontalAlignment = HorizontalAlignment.Center;
+            _glassShelf.VerticalAlignment = VerticalAlignment.Bottom;
+            _glassShelf.Margin = new Thickness(0, 0, 0, 8);
+            _glassShelf.CornerRadius = new CornerRadius(22);
+            _glassShelf.Background = LiquidGlassTheme.CreateGlassBrush(168, 196);
+            _glassShelf.BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush();
+            _glassShelf.BorderThickness = new Thickness(1);
+            _glassShelf.Effect = new DropShadowEffect
             {
-                Background = LiquidGlassTheme.CreateGlassBrush(130, 180),
+                BlurRadius = 26,
+                ShadowDepth = 8,
+                Opacity = 0.56,
+                Color = Colors.Black
+            };
+            _outerRoot.Children.Add(_glassShelf);
+
+            _itemsPanel = new StackPanel();
+            _itemsPanel.Orientation = Orientation.Horizontal;
+            _itemsPanel.HorizontalAlignment = HorizontalAlignment.Center;
+            _itemsPanel.VerticalAlignment = VerticalAlignment.Bottom;
+            _itemsPanel.Margin = new Thickness(0, 0, 0, 14);
+            _itemsPanel.ClipToBounds = false;
+
+            RebuildDockVisuals();
+            _outerRoot.Children.Add(_itemsPanel);
+
+            _tooltipPill = new Border();
+            _tooltipPill.HorizontalAlignment = HorizontalAlignment.Left;
+            _tooltipPill.VerticalAlignment = VerticalAlignment.Bottom;
+            _tooltipPill.Background = LiquidGlassTheme.CreateGlassBrush(228, 242);
+            _tooltipPill.BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush();
+            _tooltipPill.BorderThickness = new Thickness(1);
+            _tooltipPill.CornerRadius = new CornerRadius(8);
+            _tooltipPill.Padding = new Thickness(11, 4, 11, 4);
+            _tooltipPill.Visibility = Visibility.Hidden;
+            _tooltipPill.IsHitTestVisible = false;
+            _tooltipPill.Effect = new DropShadowEffect
+            {
+                BlurRadius = 14,
+                ShadowDepth = 4,
+                Opacity = 0.45,
+                Color = Colors.Black
+            };
+
+            _tooltipText = new TextBlock();
+            _tooltipText.Foreground = Brushes.White;
+            _tooltipText.FontSize = 12.5;
+            _tooltipText.FontWeight = FontWeights.Medium;
+            _tooltipPill.Child = _tooltipText;
+            _outerRoot.Children.Add(_tooltipPill);
+
+            Content = _outerRoot;
+        }
+
+        public void RebuildDockVisuals()
+        {
+            if (_itemsPanel == null) return;
+            _itemsPanel.Children.Clear();
+            if (_glassShelf != null) _glassShelf.Height = BaseIconSize + 14;
+            foreach (DockAppItem item in ShellController.Instance.DockItems)
+            {
+                _itemsPanel.Children.Add(CreateDockItemElement(item));
+            }
+            OnScanRunningWindows(null, EventArgs.Empty);
+        }
+
+        private FrameworkElement CreateDockItemElement(DockAppItem item)
+        {
+            if (item.IsSeparator)
+            {
+                Border sep = new Border();
+                sep.Width = 1;
+                sep.Height = Math.Max(28, BaseIconSize - 12);
+                sep.VerticalAlignment = VerticalAlignment.Bottom;
+                sep.Margin = new Thickness(7, 0, 7, 6);
+                sep.Background = new SolidColorBrush(Color.FromArgb(62, 255, 255, 255));
+                item.RootContainer = sep;
+                return sep;
+            }
+
+            Border container = new Border();
+            container.Background = Brushes.Transparent;
+            container.Margin = new Thickness(ItemMarginX, 0, ItemMarginX, 0);
+            container.VerticalAlignment = VerticalAlignment.Bottom;
+            container.Cursor = Cursors.Arrow;
+            container.ClipToBounds = false;
+
+            Grid wrapper = new Grid();
+            wrapper.Width = BaseIconSize;
+            wrapper.Height = BaseIconSize;
+            wrapper.VerticalAlignment = VerticalAlignment.Bottom;
+            wrapper.ClipToBounds = false;
+
+            Image img = new Image();
+            img.Source = (item.CustomImageSource != null)
+                ? item.CustomImageSource
+                : ShellController.Instance.GetIcon(item.IconFile);
+            img.Stretch = Stretch.Uniform;
+            RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.HighQuality);
+            img.Effect = new DropShadowEffect
+            {
+                BlurRadius = 10,
+                ShadowDepth = 4,
+                Opacity = 0.42,
+                Color = Colors.Black
+            };
+            wrapper.Children.Add(img);
+
+            Border dot = new Border();
+            dot.Width = 4.5;
+            dot.Height = 4.5;
+            dot.CornerRadius = new CornerRadius(2.5);
+            dot.Background = Brushes.White;
+            dot.HorizontalAlignment = HorizontalAlignment.Center;
+            dot.VerticalAlignment = VerticalAlignment.Bottom;
+            dot.Margin = new Thickness(0, 0, 0, -6);
+            dot.Visibility = item.IsRunning ? Visibility.Visible : Visibility.Hidden;
+            dot.Effect = new DropShadowEffect
+            {
+                BlurRadius = 6,
+                ShadowDepth = 0,
+                Opacity = 0.9,
+                Color = Colors.White
+            };
+            wrapper.Children.Add(dot);
+
+            container.Child = wrapper;
+
+            item.RootContainer = container;
+            item.IconWrapper = wrapper;
+            item.IconImage = img;
+            item.RunningDot = dot;
+            item.CurrentSize = BaseIconSize;
+            item.TargetSize = BaseIconSize;
+
+            container.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
+            {
+                ShellController.Instance.LaunchOrFocusDockItem(item);
+            };
+
+            container.MouseRightButtonUp += delegate(object s, MouseButtonEventArgs e)
+            {
+                ShowDockContextMenu(item);
+            };
+
+            return container;
+        }
+
+        private void ShowDockContextMenu(DockAppItem item)
+        {
+            if (_dockContextMenuPopup != null && _dockContextMenuPopup.IsOpen)
+            {
+                _dockContextMenuPopup.IsOpen = false;
+            }
+
+            Popup popup = new Popup();
+            popup.AllowsTransparency = true;
+            popup.PlacementTarget = item.RootContainer;
+            popup.Placement = PlacementMode.Top;
+            popup.VerticalOffset = -10;
+            popup.StaysOpen = false;
+            popup.PopupAnimation = PopupAnimation.Fade;
+
+            Border outer = new Border
+            {
+                Margin = new Thickness(10),
+                Background = LiquidGlassTheme.CreateGlassBrush(234, 246),
                 BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush(),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(18),
-                Padding = new Thickness(10, 6, 10, 6),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Bottom
+                CornerRadius = new CornerRadius(14),
+                Padding = new Thickness(5),
+                MinWidth = 220,
+                Effect = new DropShadowEffect { BlurRadius = 22, ShadowDepth = 6, Opacity = 0.55, Color = Colors.Black }
             };
 
-            _dockStack = new StackPanel
+            StackPanel stack = new StackPanel();
+            stack.Children.Add(CreateDockMenuRow("▶  Открыть «" + item.Name + "»", delegate
             {
-                Orientation = Orientation.Horizontal,
-                VerticalAlignment = VerticalAlignment.Bottom
-            };
+                popup.IsOpen = false;
+                ShellController.Instance.LaunchOrFocusDockItem(item);
+            }));
 
-            _glassBorder.Child = _dockStack;
-            Content = _glassBorder;
-        }
-
-        public void PositionDock()
-        {
-            UpdateLayout();
-            _glassBorder.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            double desiredW = Math.Max(_glassBorder.DesiredSize.Width + 24, 200);
-            double desiredH = Math.Max(_baseSize + _zoomRange + 28, 86);
-
-            Width = desiredW;
-            Height = desiredH;
-            Left = (SystemParameters.PrimaryScreenWidth - desiredW) / 2.0;
-
-            if (!_isDockHidden)
+            if (!item.IsAppsLauncher && !item.IsWindowSwitcher && !item.IsTrash)
             {
-                Top = SystemParameters.PrimaryScreenHeight - desiredH - 8;
-            }
-            else
-            {
-                Top = SystemParameters.PrimaryScreenHeight - 4;
-            }
-        }
-
-        public void LoadDockItems()
-        {
-            _dockStack.Children.Clear();
-            _items.Clear();
-
-            var pinnedConfigs = ShellController.Instance.Config.PinnedDockItems;
-            if (pinnedConfigs != null)
-            {
-                foreach (var cfg in pinnedConfigs)
+                stack.Children.Add(CreateDockMenuRow("➕  Новое окно", delegate
                 {
-                    var item = CreateItemFromConfig(cfg);
-                    _items.Add(item);
-                }
-            }
+                    popup.IsOpen = false;
+                    ShellController.RunProcess(item.LaunchCommand, item.LaunchArgs);
+                }));
 
-            RebuildVisualTree();
-            UpdateRunningStates();
-        }
-
-        private DockAppItem CreateItemFromConfig(DockItemConfig cfg)
-        {
-            var item = new DockAppItem
-            {
-                Id = cfg.Id,
-                Name = cfg.Name,
-                IconFile = cfg.IconFile,
-                LaunchCommand = cfg.LaunchCommand,
-                LaunchArgs = cfg.LaunchArgs,
-                ProcessNames = cfg.ProcessNames,
-                IsPinned = true,
-                IsSeparator = cfg.IsSeparator,
-                IsTrash = cfg.IsTrash,
-                IsAppsLauncher = cfg.IsAppsLauncher,
-                IsDesktopFolder = cfg.IsDesktopFolder,
-                IsExplorer = cfg.IsExplorer,
-                IsWindowSwitcher = cfg.IsWindowSwitcher,
-                CurrentSize = _baseSize,
-                TargetSize = _baseSize
-            };
-            return item;
-        }
-
-        private void RebuildVisualTree()
-        {
-            _dockStack.Children.Clear();
-
-            foreach (var item in _items)
-            {
-                if (item.IsSeparator)
+                if (!item.IsDesktopFolder && !item.IsExplorer)
                 {
-                    var sepBorder = new Border
+                    stack.Children.Add(CreateDockMenuRow("🛡  Запустить от имени администратора", delegate
                     {
-                        Width = 1,
-                        Height = _baseSize * 0.7,
-                        Background = new SolidColorBrush(Color.FromArgb(70, 255, 255, 255)),
-                        Margin = new Thickness(6, 0, 6, 8),
-                        VerticalAlignment = VerticalAlignment.Center
-                    };
-                    item.RootContainer = sepBorder;
-                    _dockStack.Children.Add(sepBorder);
-                    continue;
+                        popup.IsOpen = false;
+                        ShellController.RunProcessEx(item.LaunchCommand, item.LaunchArgs, true);
+                    }));
                 }
 
-                var container = new Border
+                if (!string.IsNullOrEmpty(item.LaunchCommand) && item.LaunchCommand.IndexOf('\\') >= 0 && File.Exists(item.LaunchCommand))
                 {
-                    Background = Brushes.Transparent,
-                    Cursor = Cursors.Hand,
-                    Margin = new Thickness(3, 0, 3, 0),
-                    VerticalAlignment = VerticalAlignment.Bottom
-                };
-
-                var stack = new StackPanel
-                {
-                    Orientation = Orientation.Vertical,
-                    HorizontalAlignment = HorizontalAlignment.Center
-                };
-
-                var iconWrapper = new Grid
-                {
-                    Width = _baseSize,
-                    Height = _baseSize,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Bottom
-                };
-
-                var iconImg = new Image
-                {
-                    Width = _baseSize,
-                    Height = _baseSize,
-                    Stretch = Stretch.Uniform
-                };
-                RenderOptions.SetBitmapScalingMode(iconImg, BitmapScalingMode.HighQuality);
-
-                iconImg.Source = ResolveItemIcon(item);
-                iconWrapper.Children.Add(iconImg);
-                stack.Children.Add(iconWrapper);
-
-                // Running indicator dot
-                var dot = new Border
-                {
-                    Width = 4,
-                    Height = 4,
-                    CornerRadius = new CornerRadius(2),
-                    Background = Brushes.White,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    Margin = new Thickness(0, 3, 0, 1),
-                    Visibility = item.IsRunning ? Visibility.Visible : Visibility.Collapsed
-                };
-                stack.Children.Add(dot);
-
-                container.Child = stack;
-
-                item.RootContainer = container;
-                item.IconWrapper = iconWrapper;
-                item.IconImage = iconImg;
-                item.RunningDot = dot;
-
-                if (!string.IsNullOrEmpty(item.Name))
-                {
-                    container.ToolTip = item.Name;
-                }
-
-                // Interaction
-                container.MouseLeftButtonUp += (s, e) => OnItemClicked(item);
-                container.MouseRightButtonUp += (s, e) => ShowItemContextMenu(item);
-
-                _dockStack.Children.Add(container);
-            }
-
-            PositionDock();
-        }
-
-        private ImageSource ResolveItemIcon(DockAppItem item)
-        {
-            if (item.CustomImageSource != null) return item.CustomImageSource;
-
-            if (!string.IsNullOrEmpty(item.IconFile))
-            {
-                string fullPath = System.IO.Path.Combine(ShellController.IconsDir, item.IconFile);
-                if (File.Exists(fullPath))
-                {
-                    try
+                    stack.Children.Add(CreateDockMenuRow("📂  Открыть расположение файла", delegate
                     {
-                        var bmp = new BitmapImage(new Uri(fullPath, UriKind.Absolute));
-                        bmp.Freeze();
-                        return bmp;
-                    }
-                    catch { }
+                        popup.IsOpen = false;
+                        ShellController.OpenFileLocation(item.LaunchCommand);
+                    }));
                 }
             }
-
-            if (!string.IsNullOrEmpty(item.LaunchCommand) && File.Exists(item.LaunchCommand))
-            {
-                var icon = ShellComInterop.ExtractHighResIcon(item.LaunchCommand, 0);
-                if (icon != null) return icon;
-            }
-
-            return null;
-        }
-
-        private void OnItemClicked(DockAppItem item)
-        {
-            if (item.IsAppsLauncher)
-            {
-                ShellController.Instance.ToggleLaunchpad();
-                return;
-            }
-
-            if (item.IsWindowSwitcher)
-            {
-                ShellController.Instance.ToggleWindowSwitcher();
-                return;
-            }
-
-            if (item.IsRunning && item.ActiveHwnd != IntPtr.Zero)
-            {
-                WindowTrackerService.ActivateWindow(item.ActiveHwnd);
-                return;
-            }
-
-            ShellController.Instance.LaunchApp(item.LaunchCommand, item.LaunchArgs);
-        }
-
-        private void ShowItemContextMenu(DockAppItem item)
-        {
-            ContextMenu cm = new ContextMenu();
 
             if (item.IsTrash)
             {
-                var miEmpty = new MenuItem { Header = "Очистить Корзину" };
-                miEmpty.Click += (s, e) =>
+                stack.Children.Add(CreateDockMenuRow("🗑  Очистить Корзину", delegate
                 {
-                    Win32Api.SHEmptyRecycleBin(IntPtr.Zero, null, 0);
-                };
-                cm.Items.Add(miEmpty);
-                cm.IsOpen = true;
-                return;
+                    popup.IsOpen = false;
+                    NativeMethods.SHEmptyRecycleBin(IntPtr.Zero, null, 0);
+                }));
             }
 
-            var miOpen = new MenuItem { Header = "Открыть" };
-            miOpen.Click += (s, e) => OnItemClicked(item);
-            cm.Items.Add(miOpen);
-
-            if (!string.IsNullOrEmpty(item.LaunchCommand) && !item.LaunchCommand.StartsWith("@"))
+            // Pin / Unpin / Move options
+            if (item.IsDynamic)
             {
-                var miAdmin = new MenuItem { Header = "Запуск от имени администратора" };
-                miAdmin.Click += (s, e) =>
+                stack.Children.Add(CreateDockSeparator());
+                stack.Children.Add(CreateDockMenuRow("📌  Закрепить в Dock", delegate
                 {
+                    popup.IsOpen = false;
+                    string exePath = item.LaunchCommand;
                     try
                     {
-                        ProcessStartInfo psi = new ProcessStartInfo
+                        if (item.ActiveHwnd != IntPtr.Zero)
                         {
-                            FileName = item.LaunchCommand,
-                            Arguments = item.LaunchArgs ?? "",
-                            Verb = "runas",
-                            UseShellExecute = true
-                        };
-                        Process.Start(psi);
+                            uint pid;
+                            NativeMethods.GetWindowThreadProcessId(item.ActiveHwnd, out pid);
+                            Process p = Process.GetProcessById((int)pid);
+                            exePath = p.MainModule.FileName;
+                        }
                     }
                     catch { }
-                };
-                cm.Items.Add(miAdmin);
+                    ShellController.Instance.PinAppToDock(item.Name, exePath, "");
+                }));
+            }
+            else if (item.IsPinned && !item.IsExplorer && !item.IsAppsLauncher && !item.IsTrash && !item.IsDesktopFolder)
+            {
+                stack.Children.Add(CreateDockSeparator());
+                stack.Children.Add(CreateDockMenuRow("◀  Переместить влево", delegate
+                {
+                    popup.IsOpen = false;
+                    ShellController.Instance.MovePinnedDockItem(item.Id, -1);
+                }));
+                stack.Children.Add(CreateDockMenuRow("▶  Переместить вправо", delegate
+                {
+                    popup.IsOpen = false;
+                    ShellController.Instance.MovePinnedDockItem(item.Id, 1);
+                }));
+                stack.Children.Add(CreateDockMenuRow("❌  Открепить из Dock", delegate
+                {
+                    popup.IsOpen = false;
+                    ShellController.Instance.UnpinAppFromDock(item.Id);
+                }));
             }
 
-            cm.Items.Add(new Separator());
-
-            if (item.IsPinned)
+            if (item.ActiveHwnd != IntPtr.Zero)
             {
-                var miUnpin = new MenuItem { Header = "Открепить от Dock" };
-                miUnpin.Click += (s, e) => UnpinItem(item);
-                cm.Items.Add(miUnpin);
+                stack.Children.Add(CreateDockSeparator());
+                stack.Children.Add(CreateDockMenuRow("🗕  Свернуть / Показать", delegate
+                {
+                    popup.IsOpen = false;
+                    ShellController.Instance.LaunchOrFocusDockItem(item);
+                }));
+                stack.Children.Add(CreateDockMenuRow("✕  Закрыть окно", delegate
+                {
+                    popup.IsOpen = false;
+                    NativeMethods.PostMessage(item.ActiveHwnd, NativeMethods.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                }));
+            }
+
+            stack.Children.Add(CreateDockSeparator());
+            stack.Children.Add(CreateDockMenuRow("⚙  Настройки Dock и лаунчера...", delegate
+            {
+                popup.IsOpen = false;
+                ShellController.Instance.ShowLauncherSettings();
+            }));
+
+            outer.Child = stack;
+            popup.Child = outer;
+            _dockContextMenuPopup = popup;
+            popup.IsOpen = true;
+        }
+
+        private FrameworkElement CreateDockSeparator()
+        {
+            return new Border
+            {
+                Height = 1,
+                Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
+                Margin = new Thickness(8, 4, 8, 4)
+            };
+        }
+
+        private FrameworkElement CreateDockMenuRow(string text, Action onClick)
+        {
+            Border row = new Border
+            {
+                CornerRadius = new CornerRadius(7),
+                Padding = new Thickness(10, 5, 10, 5),
+                Background = Brushes.Transparent
+            };
+            row.Child = new TextBlock
+            {
+                Text = text,
+                FontSize = 13,
+                Foreground = Brushes.White
+            };
+            row.MouseEnter += delegate { row.Background = LiquidGlassTheme.AccentBlueBrush; };
+            row.MouseLeave += delegate { row.Background = Brushes.Transparent; };
+            row.MouseLeftButtonDown += delegate { if (onClick != null) onClick(); };
+            return row;
+        }
+
+        private void OnRenderFrame(object sender, EventArgs e)
+        {
+            double now = ElapsedSeconds;
+            double dt = now - _lastFrameTime;
+            if (dt <= 0.0 || dt > 0.1) dt = 0.016;
+            _lastFrameTime = now;
+
+            NativeMethods.POINT pt;
+            NativeMethods.GetCursorPos(out pt);
+
+            PresentationSource src = PresentationSource.FromVisual(this);
+            double dpiX = 1.0;
+            double dpiY = 1.0;
+            if (src != null && src.CompositionTarget != null)
+            {
+                dpiX = src.CompositionTarget.TransformToDevice.M11;
+                dpiY = src.CompositionTarget.TransformToDevice.M22;
+            }
+
+            double cursorScreenX = pt.X / dpiX;
+            double cursorScreenY = pt.Y / dpiY;
+
+            double screenW = SystemParameters.PrimaryScreenWidth;
+            double screenH = SystemParameters.PrimaryScreenHeight;
+
+            double baseSize = BaseIconSize;
+            double maxZoom = MaxIconZoom;
+
+            double unmagnifiedRowWidth = 0.0;
+            List<DockAppItem> items = ShellController.Instance.DockItems;
+            for (int i = 0; i < items.Count; i++)
+            {
+                unmagnifiedRowWidth += items[i].IsSeparator ? 15.0 : (baseSize + ItemMarginX * 2.0);
+            }
+            double rowStartLeft = (screenW - unmagnifiedRowWidth) / 2.0;
+
+            bool cursorWithinHorizontalBounds = (cursorScreenX >= rowStartLeft - 45.0) &&
+                                                (cursorScreenX <= rowStartLeft + unmagnifiedRowWidth + 45.0);
+
+            if (cursorScreenY >= screenH - 10.0 && cursorWithinHorizontalBounds)
+            {
+                _dockRevealedByMouse = true;
+            }
+            else if (cursorScreenY < screenH - 120.0 || !cursorWithinHorizontalBounds)
+            {
+                _dockRevealedByMouse = false;
+            }
+
+            bool popupOpen = (_dockContextMenuPopup != null && _dockContextMenuPopup.IsOpen);
+
+            if (ShellController.Instance.DockAutoHide && _activeWindowIsMaximized && !_dockRevealedByMouse && !popupOpen)
+            {
+                _targetSlideY = baseSize + 38.0;
             }
             else
             {
-                var miPin = new MenuItem { Header = "Закрепить в Dock" };
-                miPin.Click += (s, e) => PinItem(item);
-                cm.Items.Add(miPin);
+                _targetSlideY = 0.0;
             }
 
-            cm.IsOpen = true;
-        }
+            double slideLerp = 1.0 - Math.Exp(-16.0 * dt);
+            _currentSlideY += (_targetSlideY - _currentSlideY) * slideLerp;
+            _dockSlideTransform.Y = _currentSlideY;
 
-        private void PinItem(DockAppItem item)
-        {
-            item.IsPinned = true;
-            item.IsDynamic = false;
+            bool dockActiveHover = (_currentSlideY < 35.0) &&
+                                   cursorWithinHorizontalBounds &&
+                                   (cursorScreenY >= screenH - (baseSize + 48.0)) &&
+                                   (cursorScreenY <= screenH);
 
-            var newConfig = new DockItemConfig
+            DockAppItem hoveredClosest = null;
+            double closestDist = 9999.0;
+
+            double totalShelfWidth = 22.0;
+            double sizeLerp = 1.0 - Math.Exp(-25.0 * dt);
+            double curBaseX = rowStartLeft;
+
+            for (int i = 0; i < items.Count; i++)
             {
-                Id = Guid.NewGuid().ToString("N"),
-                Name = item.Name,
-                LaunchCommand = item.LaunchCommand,
-                LaunchArgs = item.LaunchArgs,
-                ProcessNames = item.ProcessNames
-            };
-
-            ShellController.Instance.Config.PinnedDockItems.Add(newConfig);
-            ShellController.Instance.SaveConfig();
-            LoadDockItems();
-        }
-
-        private void UnpinItem(DockAppItem item)
-        {
-            var cfg = ShellController.Instance.Config.PinnedDockItems
-                .FirstOrDefault(x => x.Id == item.Id || (x.Name == item.Name && x.LaunchCommand == item.LaunchCommand));
-
-            if (cfg != null)
-            {
-                ShellController.Instance.Config.PinnedDockItems.Remove(cfg);
-                ShellController.Instance.SaveConfig();
-                LoadDockItems();
-            }
-        }
-
-        private void OnDockMouseMove(object sender, MouseEventArgs e)
-        {
-            Point mousePos = e.GetPosition(_glassBorder);
-            double mouseX = mousePos.X;
-
-            foreach (var item in _items)
-            {
-                if (item.RootContainer == null || item.IsSeparator) continue;
-
-                Point itemPos = item.RootContainer.TranslatePoint(new Point(item.RootContainer.ActualWidth / 2.0, 0), _glassBorder);
-                double d = Math.Abs(mouseX - itemPos.X);
-
-                if (d < InfluenceRadius)
+                DockAppItem item = items[i];
+                if (item.IsSeparator)
                 {
-                    double ratio = Math.Cos((d / InfluenceRadius) * (Math.PI / 2.0));
-                    item.TargetSize = _baseSize + (_zoomRange * ratio);
-                    item.TargetLift = -_zoomRange * 0.45 * ratio;
+                    curBaseX += 15.0;
+                    totalShelfWidth += 15.0;
+                    continue;
+                }
+
+                double slotWidth = baseSize + ItemMarginX * 2.0;
+                double baseCenterX = curBaseX + (slotWidth / 2.0);
+                curBaseX += slotWidth;
+
+                double dx = Math.Abs(cursorScreenX - baseCenterX);
+
+                if (dockActiveHover && dx < 130.0)
+                {
+                    double norm = dx / 130.0;
+                    double wave = (1.0 + Math.Cos(Math.PI * norm)) * 0.5;
+                    wave = wave * wave;
+                    item.TargetSize = baseSize + maxZoom * wave;
+                    item.TargetLift = 9.0 * wave;
+
+                    if (dx < closestDist && dx < 32.0)
+                    {
+                        closestDist = dx;
+                        hoveredClosest = item;
+                    }
                 }
                 else
                 {
-                    item.TargetSize = _baseSize;
-                    item.TargetLift = 0;
+                    item.TargetSize = baseSize;
+                    item.TargetLift = 0.0;
                 }
-            }
-        }
 
-        private void ResetWaveTargets()
-        {
-            foreach (var item in _items)
-            {
-                item.TargetSize = _baseSize;
-                item.TargetLift = 0;
-            }
-        }
-
-        private void OnRenderTick(object sender, EventArgs e)
-        {
-            bool needsResize = false;
-
-            foreach (var item in _items)
-            {
-                if (item.IconWrapper == null || item.IsSeparator) continue;
-
-                double diffSize = item.TargetSize - item.CurrentSize;
-                double diffLift = item.TargetLift - item.CurrentLift;
-
-                if (Math.Abs(diffSize) > 0.05 || Math.Abs(diffLift) > 0.05)
+                double bounceOffset = 0.0;
+                double bounceElapsed = now - item.BounceStartTime;
+                if (bounceElapsed >= 0.0 && bounceElapsed < 1.2)
                 {
-                    item.CurrentSize += diffSize * 0.32;
-                    item.CurrentLift += diffLift * 0.32;
+                    bounceOffset = Math.Abs(Math.Sin(bounceElapsed * Math.PI * 2.4)) * Math.Exp(-bounceElapsed * 1.8) * 24.0;
+                }
 
+                item.CurrentSize += (item.TargetSize - item.CurrentSize) * sizeLerp;
+                item.CurrentLift += ((item.TargetLift + bounceOffset) - item.CurrentLift) * sizeLerp;
+
+                if (item.IconWrapper != null)
+                {
                     item.IconWrapper.Width = item.CurrentSize;
                     item.IconWrapper.Height = item.CurrentSize;
-                    item.IconImage.Width = item.CurrentSize;
-                    item.IconImage.Height = item.CurrentSize;
-                    item.IconWrapper.Margin = new Thickness(0, item.CurrentLift, 0, -item.CurrentLift);
-
-                    needsResize = true;
                 }
-            }
-
-            if (needsResize)
-            {
-                PositionDock();
-            }
-        }
-
-        private void StartTimers()
-        {
-            _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-            _pollTimer.Tick += (s, e) => UpdateRunningStates();
-            _pollTimer.Start();
-
-            if (ShellController.Instance.Config.DockAutoHide)
-            {
-                _autoHideTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
-                _autoHideTimer.Tick += OnAutoHideCheck;
-                _autoHideTimer.Start();
-            }
-        }
-
-        private void OnAutoHideCheck(object sender, EventArgs e)
-        {
-            if (!ShellController.Instance.Config.DockAutoHide) return;
-
-            POINT pt;
-            if (Win32Api.GetCursorPos(out pt))
-            {
-                int screenH = (int)SystemParameters.PrimaryScreenHeight;
-                if (pt.Y >= screenH - 6)
+                if (item.IconImage != null)
                 {
-                    RevealDock();
+                    item.IconImage.Margin = new Thickness(0, 0, 0, item.CurrentLift);
                 }
-                else if (pt.Y < screenH - Height - 50 && !_isMouseOverDock)
+
+                totalShelfWidth += item.CurrentSize + (ItemMarginX * 2.0);
+            }
+
+            _glassShelf.Height = baseSize + 14;
+            _glassShelf.Width = Math.Max(200.0, totalShelfWidth);
+
+            if (hoveredClosest != null && dockActiveHover && !popupOpen)
+            {
+                _tooltipText.Text = hoveredClosest.Name;
+                _tooltipPill.Visibility = Visibility.Visible;
+                _tooltipPill.UpdateLayout();
+                Point centerPt = hoveredClosest.RootContainer.TranslatePoint(
+                    new Point(hoveredClosest.RootContainer.ActualWidth / 2.0, 0), _outerRoot);
+                double pillLeft = centerPt.X - (_tooltipPill.ActualWidth / 2.0);
+                double pillBottom = 18.0 + hoveredClosest.CurrentSize + hoveredClosest.CurrentLift;
+                _tooltipPill.Margin = new Thickness(pillLeft, 0, 0, pillBottom);
+            }
+            else
+            {
+                if (_tooltipPill.Visibility != Visibility.Hidden)
+                    _tooltipPill.Visibility = Visibility.Hidden;
+            }
+        }
+
+        private void OnScanRunningWindows(object sender, EventArgs e)
+        {
+            try
+            {
+                Dictionary<string, IntPtr> procWindows = new Dictionary<string, IntPtr>(StringComparer.OrdinalIgnoreCase);
+                Dictionary<string, uint> procPids = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
+                Dictionary<string, string> procTitles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                IntPtr explorerFolderHwnd = IntPtr.Zero;
+                uint selfPid = (uint)Process.GetCurrentProcess().Id;
+
+                IntPtr fg = NativeMethods.GetForegroundWindow();
+                bool fgMaximized = false;
+                if (fg != IntPtr.Zero)
                 {
-                    HideDock();
-                }
-            }
-        }
-
-        private void RevealDock()
-        {
-            if (_isDockHidden)
-            {
-                _isDockHidden = false;
-                PositionDock();
-            }
-        }
-
-        private void HideDock()
-        {
-            if (!_isDockHidden)
-            {
-                _isDockHidden = true;
-                PositionDock();
-            }
-        }
-
-        private void UpdateRunningStates()
-        {
-            var openWindows = ShellController.Instance.WindowTracker.GetOpenWindows();
-
-            foreach (var item in _items)
-            {
-                item.IsRunning = false;
-                item.ActiveHwnd = IntPtr.Zero;
-
-                if (item.ProcessNames != null && item.ProcessNames.Length > 0)
-                {
-                    var win = openWindows.FirstOrDefault(w => item.ProcessNames.Any(p => p.Equals(w.ProcessName, StringComparison.OrdinalIgnoreCase)));
-                    if (win != null)
+                    StringBuilder fgCls = new StringBuilder(128);
+                    NativeMethods.GetClassName(fg, fgCls, fgCls.Capacity);
+                    string c = fgCls.ToString();
+                    if (c != "Progman" && c != "WorkerW" && c != "Shell_TrayWnd")
                     {
-                        item.IsRunning = true;
-                        item.ActiveHwnd = win.Hwnd;
+                        fgMaximized = NativeMethods.IsZoomed(fg);
                     }
                 }
-                else if (item.IsExplorer)
+                _activeWindowIsMaximized = fgMaximized;
+
+                NativeMethods.EnumWindows(delegate(IntPtr hWnd, IntPtr lParam)
                 {
-                    var win = openWindows.FirstOrDefault(w => w.ProcessName.Equals("explorer", StringComparison.OrdinalIgnoreCase));
-                    if (win != null)
+                    if (!NativeMethods.IsWindowVisible(hWnd)) return true;
+
+                    int cloaked = 0;
+                    NativeMethods.DwmGetWindowAttribute(hWnd, 14, out cloaked, sizeof(int));
+                    if (cloaked != 0) return true;
+
+                    int exStyle = NativeMethods.GetWindowLong(hWnd, NativeMethods.GWL_EXSTYLE);
+                    if ((exStyle & NativeMethods.WS_EX_TOOLWINDOW) != 0) return true;
+                    if (NativeMethods.GetWindow(hWnd, 4) != IntPtr.Zero) return true;
+
+                    StringBuilder sbTitle = new StringBuilder(256);
+                    if (NativeMethods.GetWindowText(hWnd, sbTitle, sbTitle.Capacity) <= 0) return true;
+                    string winTitle = sbTitle.ToString();
+
+                    StringBuilder sbClass = new StringBuilder(128);
+                    NativeMethods.GetClassName(hWnd, sbClass, sbClass.Capacity);
+                    string cls = sbClass.ToString();
+                    if (cls == "Progman" || cls == "WorkerW" || cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd" ||
+                        cls == "Windows.UI.Core.CoreWindow" || cls == "ApplicationFrameWindow" || cls == "CEF-OSC-WIDGET")
+                        return true;
+
+                    if (cls == "CabinetWClass" || cls == "ExploreWClass")
                     {
-                        item.IsRunning = true;
-                        item.ActiveHwnd = win.Hwnd;
+                        if (explorerFolderHwnd == IntPtr.Zero)
+                            explorerFolderHwnd = hWnd;
+                        return true;
+                    }
+
+                    uint pid;
+                    NativeMethods.GetWindowThreadProcessId(hWnd, out pid);
+                    if (pid == selfPid) return true;
+
+                    try
+                    {
+                        Process p = Process.GetProcessById((int)pid);
+                        string pn = p.ProcessName;
+                        if (string.Equals(pn, "seelen-ui", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(pn, "TextInputHost", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(pn, "SearchHost", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(pn, "ShellExperienceHost", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(pn, "StartMenuExperienceHost", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return true;
+                        }
+                        if (!procWindows.ContainsKey(pn))
+                        {
+                            procWindows[pn] = hWnd;
+                            procPids[pn] = pid;
+                            procTitles[pn] = winTitle;
+                        }
+                    }
+                    catch { }
+                    return true;
+                }, IntPtr.Zero);
+
+                NativeMethods.SHQUERYRBINFO rbInfo = new NativeMethods.SHQUERYRBINFO();
+                rbInfo.cbSize = Marshal.SizeOf(rbInfo);
+                bool trashHasItems = false;
+                if (NativeMethods.SHQueryRecycleBin(null, ref rbInfo) == 0 && rbInfo.i64NumItems > 0)
+                {
+                    trashHasItems = true;
+                }
+
+                HashSet<string> claimedProcs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                List<DockAppItem> items = ShellController.Instance.DockItems;
+
+                for (int i = 0; i < items.Count; i++)
+                {
+                    DockAppItem item = items[i];
+                    if (item.IsSeparator || item.IsDynamic) continue;
+                    if (item.IsTrash)
+                    {
+                        string targetTrashIcon = trashHasItems ? "trash-full.png" : "trash.png";
+                        if (item.IconFile != targetTrashIcon)
+                        {
+                            item.IconFile = targetTrashIcon;
+                            if (item.IconImage != null)
+                                item.IconImage.Source = ShellController.Instance.GetIcon(targetTrashIcon);
+                        }
+                        continue;
+                    }
+                    if (item.IsExplorer)
+                    {
+                        item.ActiveHwnd = explorerFolderHwnd;
+                        item.IsRunning = (explorerFolderHwnd != IntPtr.Zero);
+                        if (item.RunningDot != null)
+                        {
+                            item.RunningDot.Visibility = item.IsRunning ? Visibility.Visible : Visibility.Hidden;
+                        }
+                        claimedProcs.Add("explorer");
+                        continue;
+                    }
+
+                    IntPtr matchedHwnd = IntPtr.Zero;
+                    if (item.ProcessNames != null)
+                    {
+                        foreach (string pn in item.ProcessNames)
+                        {
+                            claimedProcs.Add(pn);
+                            if (matchedHwnd == IntPtr.Zero && procWindows.TryGetValue(pn, out matchedHwnd))
+                            {
+                            }
+                        }
+                    }
+                    item.ActiveHwnd = matchedHwnd;
+                    item.IsRunning = (matchedHwnd != IntPtr.Zero);
+                    if (item.RunningDot != null)
+                    {
+                        item.RunningDot.Visibility = item.IsRunning ? Visibility.Visible : Visibility.Hidden;
                     }
                 }
 
-                if (item.RunningDot != null)
+                for (int i = items.Count - 1; i >= 0; i--)
                 {
-                    item.RunningDot.Visibility = item.IsRunning ? Visibility.Visible : Visibility.Collapsed;
+                    DockAppItem dyn = items[i];
+                    if (!dyn.IsDynamic) continue;
+                    string dynProc = dyn.ProcessNames[0];
+                    IntPtr latestHwnd;
+                    if (procWindows.TryGetValue(dynProc, out latestHwnd))
+                    {
+                        dyn.ActiveHwnd = latestHwnd;
+                        claimedProcs.Add(dynProc);
+                    }
+                    else
+                    {
+                        _itemsPanel.Children.Remove(dyn.RootContainer);
+                        items.RemoveAt(i);
+                    }
+                }
+
+                int sepIndex = -1;
+                for (int i = 0; i < items.Count; i++)
+                {
+                    if (items[i].IsSeparator)
+                    {
+                        sepIndex = i;
+                        break;
+                    }
+                }
+                if (sepIndex < 0) sepIndex = items.Count;
+
+                foreach (KeyValuePair<string, IntPtr> kv in procWindows)
+                {
+                    string pn = kv.Key;
+                    if (claimedProcs.Contains(pn)) continue;
+                    if (items.Count >= 20) break;
+
+                    uint pid = procPids[pn];
+                    DockAppItem dynItem = new DockAppItem
+                    {
+                        Id = "dyn_" + pn,
+                        Name = pn,
+                        IconFile = ShellController.MapProcessToKnownIcon(pn) ?? "finder.png",
+                        CustomImageSource = ShellController.Instance.ResolveDynamicIcon(pn, pid),
+                        LaunchCommand = pn,
+                        LaunchArgs = "",
+                        ProcessNames = new string[] { pn },
+                        IsPinned = false,
+                        IsDynamic = true,
+                        IsRunning = true,
+                        ActiveHwnd = kv.Value
+                    };
+
+                    FrameworkElement elem = CreateDockItemElement(dynItem);
+                    items.Insert(sepIndex, dynItem);
+                    _itemsPanel.Children.Insert(sepIndex, elem);
+                    sepIndex++;
                 }
             }
+            catch { }
         }
     }
+
+    // =========================================================================
+    // 3. DESKTOP WIDGETS LAYER (Настольные виджеты рабочего стола)
+    // =========================================================================
 }

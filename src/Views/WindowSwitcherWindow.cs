@@ -1,276 +1,350 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
-using MacOSTahoe.Core;
-using MacOSTahoe.Models;
-using MacOSTahoe.Native;
-using MacOSTahoe.Services;
-using MacOSTahoe.Theme;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
+using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
+using System.Windows.Threading;
+using Microsoft.Win32;
+using IOPath = System.IO.Path;
+using WpfPath = System.Windows.Shapes.Path;
 
-namespace MacOSTahoe.Views
+namespace MacOSTahoe
 {
     public class WindowSwitcherWindow : Window
     {
-        private WrapPanel _windowsPanel;
-        private ScrollViewer _scrollViewer;
+        private WrapPanel _windowsWrap;
+        private TextBlock _subTitle;
 
         public WindowSwitcherWindow()
         {
-            Title = "WindowSwitcherWindow";
+            Title = "Обзор окон";
             WindowStyle = WindowStyle.None;
             AllowsTransparency = true;
-            Background = Brushes.Transparent;
+            ResizeMode = ResizeMode.NoResize;
             Topmost = true;
             ShowInTaskbar = false;
-            ResizeMode = ResizeMode.NoResize;
-
-            Visibility = Visibility.Collapsed;
-            IsHitTestVisible = false;
-
             Left = 0;
             Top = 0;
             Width = SystemParameters.PrimaryScreenWidth;
             Height = SystemParameters.PrimaryScreenHeight;
+            Background = new SolidColorBrush(Color.FromArgb(200, 10, 12, 20));
+            FontFamily = LiquidGlassTheme.UiFont;
 
-            BuildUi();
+            BuildUI();
 
-            SourceInitialized += (s, e) =>
+            SourceInitialized += delegate
             {
-                IntPtr hwnd = new WindowInteropHelper(this).Handle;
-                DwmBlurHelper.ApplyBlur(hwnd, true);
-                DwmBlurHelper.MakeToolWindow(hwnd);
+                NativeMethods.EnableBlur(this, 0xBB0E0E16);
             };
 
-            KeyDown += (s, e) =>
+            PreviewKeyDown += delegate(object s, KeyEventArgs e)
             {
                 if (e.Key == Key.Escape)
                 {
-                    HideSwitcher();
+                    e.Handled = true;
+                    Hide();
                 }
             };
         }
 
-        private void BuildUi()
+        private void BuildUI()
         {
-            var root = new Grid
+            Grid root = new Grid { Background = Brushes.Transparent };
+            root.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
             {
-                Background = new SolidColorBrush(Color.FromArgb(200, 15, 15, 20))
-            };
-            root.MouseLeftButtonUp += (s, e) =>
-            {
-                if (e.OriginalSource == root || e.OriginalSource == _scrollViewer)
-                {
-                    HideSwitcher();
-                }
+                if (e.OriginalSource == root) Hide();
             };
 
-            var grid = new Grid();
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(80) }); // Header
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // Cards
-
-            var headerText = new TextBlock
+            StackPanel container = new StackPanel
             {
-                Text = "Открытые окна",
-                FontFamily = LiquidGlassTheme.UiFont,
-                FontSize = 20,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = Brushes.White,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 56, 0, 0),
+                Width = Math.Min(1240, Width - 100)
             };
-            Grid.SetRow(headerText, 0);
-            grid.Children.Add(headerText);
 
-            _scrollViewer = new ScrollViewer
+            Grid header = new Grid { Margin = new Thickness(12, 0, 12, 20) };
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            StackPanel titles = new StackPanel();
+            titles.Children.Add(new TextBlock
+            {
+                Text = "Обзор активных окон",
+                FontSize = 24,
+                FontWeight = FontWeights.Bold,
+                Foreground = Brushes.White
+            });
+            _subTitle = new TextBlock
+            {
+                Text = "Выберите окно для переключения или закройте ненужные приложения",
+                FontSize = 13,
+                Foreground = new SolidColorBrush(Color.FromArgb(175, 235, 235, 245)),
+                Margin = new Thickness(0, 3, 0, 0)
+            };
+            titles.Children.Add(_subTitle);
+            Grid.SetColumn(titles, 0);
+            header.Children.Add(titles);
+
+            StackPanel actions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            Border minAllBtn = CreateActionPill("🗕 Свернуть все окна", delegate
+            {
+                List<OpenWindowEntry> list = ShellController.Instance.GetOpenApplicationWindows();
+                for (int i = 0; i < list.Count; i++)
+                {
+                    NativeMethods.ShowWindow(list[i].Hwnd, NativeMethods.SW_SHOWMINIMIZED);
+                }
+                Hide();
+            });
+            actions.Children.Add(minAllBtn);
+
+            Border closeBtn = CreateActionPill("✕ Закрыть обзор (Esc)", delegate { Hide(); });
+            closeBtn.Margin = new Thickness(10, 0, 0, 0);
+            actions.Children.Add(closeBtn);
+
+            Grid.SetColumn(actions, 1);
+            header.Children.Add(actions);
+            container.Children.Add(header);
+
+            ScrollViewer sv = new ScrollViewer
             {
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                Margin = new Thickness(60, 10, 60, 40)
+                MaxHeight = Height - 210
             };
-
-            _windowsPanel = new WrapPanel
+            _windowsWrap = new WrapPanel
             {
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
+                HorizontalAlignment = HorizontalAlignment.Center
             };
+            sv.Content = _windowsWrap;
+            container.Children.Add(sv);
 
-            _scrollViewer.Content = _windowsPanel;
-            Grid.SetRow(_scrollViewer, 1);
-            grid.Children.Add(_scrollViewer);
-
-            root.Children.Add(grid);
+            root.Children.Add(container);
             Content = root;
         }
 
-        public void PopulateWindows()
+        private Border CreateActionPill(string text, Action onClick)
         {
-            _windowsPanel.Children.Clear();
-            var openWins = ShellController.Instance.WindowTracker.GetOpenWindows();
-
-            if (openWins.Count == 0)
+            Border b = new Border
             {
-                var emptyNotice = new TextBlock
-                {
-                    Text = "Нет открытых окон",
-                    FontFamily = LiquidGlassTheme.UiFont,
-                    FontSize = 16,
-                    Foreground = new SolidColorBrush(Color.FromArgb(160, 255, 255, 255)),
-                    Margin = new Thickness(0, 100, 0, 0)
-                };
-                _windowsPanel.Children.Add(emptyNotice);
-                return;
-            }
-
-            foreach (var win in openWins)
-            {
-                var card = CreateWindowCard(win);
-                _windowsPanel.Children.Add(card);
-            }
-        }
-
-        private UIElement CreateWindowCard(OpenWindowEntry win)
-        {
-            var card = new Border
-            {
-                Width = 260,
-                Height = 160,
-                CornerRadius = new CornerRadius(14),
-                Background = LiquidGlassTheme.CreateGlassBrush(140, 180),
-                BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush(),
+                CornerRadius = new CornerRadius(12),
+                Background = new SolidColorBrush(Color.FromArgb(45, 255, 255, 255)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(65, 255, 255, 255)),
                 BorderThickness = new Thickness(1),
-                Margin = new Thickness(14),
-                Padding = new Thickness(12),
+                Padding = new Thickness(14, 7, 14, 7),
                 Cursor = Cursors.Hand
             };
-
-            var grid = new Grid();
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Header (Icon + Title + Close)
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // Preview placeholder
-
-            // Header
-            var headerGrid = new Grid();
-            headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            if (win.Icon != null)
-            {
-                var iconImg = new Image
-                {
-                    Width = 22,
-                    Height = 22,
-                    Source = win.Icon,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Margin = new Thickness(0, 0, 8, 0)
-                };
-                Grid.SetColumn(iconImg, 0);
-                headerGrid.Children.Add(iconImg);
-            }
-
-            var titleText = new TextBlock
-            {
-                Text = win.WindowTitle,
-                FontFamily = LiquidGlassTheme.UiFont,
-                FontSize = 12,
-                FontWeight = FontWeights.Medium,
-                Foreground = Brushes.White,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            Grid.SetColumn(titleText, 1);
-            headerGrid.Children.Add(titleText);
-
-            // Close button
-            var closeBtn = new Border
-            {
-                Width = 20,
-                Height = 20,
-                CornerRadius = new CornerRadius(10),
-                Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
-                Cursor = Cursors.Hand,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            var closeTxt = new TextBlock
-            {
-                Text = "✕",
-                FontSize = 10,
-                Foreground = Brushes.White,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            closeBtn.Child = closeTxt;
-            closeBtn.MouseLeftButtonUp += (s, e) =>
+            b.Child = new TextBlock { Text = text, FontSize = 12.5, FontWeight = FontWeights.Medium, Foreground = Brushes.White };
+            b.MouseEnter += delegate { b.Background = LiquidGlassTheme.AccentBlueBrush; };
+            b.MouseLeave += delegate { b.Background = new SolidColorBrush(Color.FromArgb(45, 255, 255, 255)); };
+            b.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
             {
                 e.Handled = true;
-                WindowTrackerService.CloseWindow(win.Hwnd);
-                _windowsPanel.Children.Remove(card);
+                if (onClick != null) onClick();
             };
-            Grid.SetColumn(closeBtn, 2);
-            headerGrid.Children.Add(closeBtn);
-
-            Grid.SetRow(headerGrid, 0);
-            grid.Children.Add(headerGrid);
-
-            // Body
-            var bodyBorder = new Border
-            {
-                Background = new SolidColorBrush(Color.FromArgb(30, 255, 255, 255)),
-                CornerRadius = new CornerRadius(8),
-                Margin = new Thickness(0, 8, 0, 0)
-            };
-            var procText = new TextBlock
-            {
-                Text = win.ProcessName,
-                FontFamily = LiquidGlassTheme.UiFont,
-                FontSize = 13,
-                Foreground = new SolidColorBrush(Color.FromArgb(140, 255, 255, 255)),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            bodyBorder.Child = procText;
-
-            Grid.SetRow(bodyBorder, 1);
-            grid.Children.Add(bodyBorder);
-
-            card.Child = grid;
-
-            // Hover
-            card.MouseEnter += (s, e) =>
-            {
-                card.BorderBrush = LiquidGlassTheme.AccentBlueBrush;
-            };
-            card.MouseLeave += (s, e) =>
-            {
-                card.BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush();
-            };
-
-            // Click to activate
-            card.MouseLeftButtonUp += (s, e) =>
-            {
-                HideSwitcher();
-                WindowTrackerService.ActivateWindow(win.Hwnd);
-            };
-
-            return card;
+            return b;
         }
 
-        public void ShowSwitcher()
+        public void ShowAndRefresh()
         {
-            Visibility = Visibility.Visible;
-            IsHitTestVisible = true;
             PopulateWindows();
+            Show();
             Activate();
         }
 
-        public void HideSwitcher()
+        private void PopulateWindows()
         {
-            Visibility = Visibility.Collapsed;
-            IsHitTestVisible = false;
+            _windowsWrap.Children.Clear();
+            List<OpenWindowEntry> wins = ShellController.Instance.GetOpenApplicationWindows();
+            _subTitle.Text = string.Format("Открыто окон: {0} — нажмите на карточку, чтобы развернуть и активировать окно", wins.Count);
+
+            if (wins.Count == 0)
+            {
+                Border emptyCard = new Border
+                {
+                    Width = 440,
+                    CornerRadius = new CornerRadius(20),
+                    Background = LiquidGlassTheme.CreateGlassBrush(200, 220),
+                    BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush(),
+                    BorderThickness = new Thickness(1),
+                    Padding = new Thickness(24),
+                    Margin = new Thickness(0, 60, 0, 0)
+                };
+                emptyCard.Child = new TextBlock
+                {
+                    Text = "Нет открытых окон приложений.\r\nОткройте любое приложение из Dock или меню «Приложения» (Win).",
+                    FontSize = 14,
+                    Foreground = Brushes.White,
+                    TextAlignment = TextAlignment.Center
+                };
+                _windowsWrap.Children.Add(emptyCard);
+                return;
+            }
+
+            for (int i = 0; i < wins.Count; i++)
+            {
+                OpenWindowEntry w = wins[i];
+                Border card = new Border
+                {
+                    Width = 285,
+                    Height = 148,
+                    Margin = new Thickness(10),
+                    CornerRadius = new CornerRadius(18),
+                    Background = LiquidGlassTheme.CreateGlassBrush(215, 235),
+                    BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush(),
+                    BorderThickness = new Thickness(1),
+                    Padding = new Thickness(14),
+                    Cursor = Cursors.Hand,
+                    Effect = new DropShadowEffect { BlurRadius = 20, ShadowDepth = 6, Opacity = 0.5, Color = Colors.Black }
+                };
+
+                Grid g = new Grid();
+                g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                g.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+                g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+                Grid topRow = new Grid();
+                topRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                topRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                topRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+                Image ico = new Image
+                {
+                    Source = w.Icon ?? ShellController.Instance.GetIcon("finder.png"),
+                    Width = 34,
+                    Height = 34,
+                    Margin = new Thickness(0, 0, 10, 0)
+                };
+                RenderOptions.SetBitmapScalingMode(ico, BitmapScalingMode.HighQuality);
+                Grid.SetColumn(ico, 0);
+                topRow.Children.Add(ico);
+
+                StackPanel appInfo = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+                appInfo.Children.Add(new TextBlock
+                {
+                    Text = w.AppTitle,
+                    FontSize = 13.5,
+                    FontWeight = FontWeights.Bold,
+                    Foreground = Brushes.White,
+                    TextTrimming = TextTrimming.CharacterEllipsis
+                });
+                appInfo.Children.Add(new TextBlock
+                {
+                    Text = w.IsMinimized ? "Свёрнуто" : "Активно",
+                    FontSize = 10.5,
+                    Foreground = w.IsMinimized
+                        ? new SolidColorBrush(Color.FromRgb(255, 214, 10))
+                        : new SolidColorBrush(Color.FromRgb(48, 209, 88))
+                });
+                Grid.SetColumn(appInfo, 1);
+                topRow.Children.Add(appInfo);
+
+                Border closeWinBtn = new Border
+                {
+                    Width = 24,
+                    Height = 24,
+                    CornerRadius = new CornerRadius(12),
+                    Background = new SolidColorBrush(Color.FromArgb(45, 255, 95, 87)),
+                    VerticalAlignment = VerticalAlignment.Top,
+                    ToolTip = "Закрыть окно"
+                };
+                closeWinBtn.Child = new TextBlock
+                {
+                    Text = "✕",
+                    FontSize = 11,
+                    FontWeight = FontWeights.Bold,
+                    Foreground = Brushes.White,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                OpenWindowEntry capW = w;
+                closeWinBtn.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
+                {
+                    e.Handled = true;
+                    NativeMethods.PostMessage(capW.Hwnd, NativeMethods.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                    DispatcherTimer dt = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(220) };
+                    dt.Tick += delegate
+                    {
+                        dt.Stop();
+                        PopulateWindows();
+                    };
+                    dt.Start();
+                };
+                Grid.SetColumn(closeWinBtn, 2);
+                topRow.Children.Add(closeWinBtn);
+
+                Grid.SetRow(topRow, 0);
+                g.Children.Add(topRow);
+
+                TextBlock winTitleBlock = new TextBlock
+                {
+                    Text = w.WindowTitle,
+                    FontSize = 12,
+                    Foreground = new SolidColorBrush(Color.FromArgb(215, 235, 235, 245)),
+                    TextWrapping = TextWrapping.Wrap,
+                    MaxHeight = 42,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    Margin = new Thickness(0, 10, 0, 8)
+                };
+                Grid.SetRow(winTitleBlock, 1);
+                g.Children.Add(winTitleBlock);
+
+                Border switchPill = new Border
+                {
+                    CornerRadius = new CornerRadius(8),
+                    Background = new SolidColorBrush(Color.FromArgb(38, 255, 255, 255)),
+                    Padding = new Thickness(8, 4, 8, 4),
+                    HorizontalAlignment = HorizontalAlignment.Stretch
+                };
+                switchPill.Child = new TextBlock
+                {
+                    Text = "Переключиться на окно →",
+                    FontSize = 11,
+                    FontWeight = FontWeights.Medium,
+                    Foreground = Brushes.White,
+                    HorizontalAlignment = HorizontalAlignment.Center
+                };
+                Grid.SetRow(switchPill, 2);
+                g.Children.Add(switchPill);
+
+                card.Child = g;
+                card.MouseEnter += delegate { card.BorderBrush = LiquidGlassTheme.AccentBlueBrush; };
+                card.MouseLeave += delegate { card.BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush(); };
+                card.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
+                {
+                    e.Handled = true;
+                    Hide();
+                    if (NativeMethods.IsIconic(capW.Hwnd))
+                    {
+                        NativeMethods.ShowWindow(capW.Hwnd, NativeMethods.SW_RESTORE);
+                    }
+                    NativeMethods.SwitchToThisWindow(capW.Hwnd, true);
+                    NativeMethods.SetForegroundWindow(capW.Hwnd);
+                };
+
+                _windowsWrap.Children.Add(card);
+            }
         }
     }
+
+    // =========================================================================
+    // 8. FULL GRAPHICAL LAUNCHER SETTINGS HUB (Настройки лаунчера — 4 вкладки)
+    // =========================================================================
 }

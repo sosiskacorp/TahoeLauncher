@@ -1,401 +1,492 @@
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
-using System.Linq;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
-using MacOSTahoe.Core;
-using MacOSTahoe.Models;
-using MacOSTahoe.Native;
-using MacOSTahoe.Theme;
+using System.Windows.Shapes;
+using System.Windows.Threading;
+using Microsoft.Win32;
+using IOPath = System.IO.Path;
+using WpfPath = System.Windows.Shapes.Path;
 
-namespace MacOSTahoe.Views
+namespace MacOSTahoe
 {
+    public class SpotlightResultItem
+    {
+        public string Title;
+        public string Subtitle;
+        public string Badge;
+        public ImageSource Icon;
+        public Action OnExecute;
+        public Action OnAdminExecute;
+        public string FileLocation;
+    }
+
     public class SpotlightWindow : Window
     {
-        private TextBox _txtSearch;
-        private StackPanel _resultsStack;
-        private ScrollViewer _scrollViewer;
+        private TextBox _searchBox;
+        private TextBlock _hintText;
+        private StackPanel _resultsPanel;
         private List<SpotlightResultItem> _currentItems = new List<SpotlightResultItem>();
-        private int _selectedIndex = -1;
+        private List<Border> _resultRows = new List<Border>();
+        private int _selectedIndex = 0;
 
         public SpotlightWindow()
         {
-            Title = "SpotlightWindow";
+            Title = "Быстрый поиск";
             WindowStyle = WindowStyle.None;
             AllowsTransparency = true;
-            Background = Brushes.Transparent;
+            ResizeMode = ResizeMode.NoResize;
             Topmost = true;
             ShowInTaskbar = false;
-            ResizeMode = ResizeMode.NoResize;
-
-            Visibility = Visibility.Collapsed;
-            IsHitTestVisible = false;
-
-            Width = 640;
-            Height = 440;
+            Width = 680;
+            Height = 470;
             Left = (SystemParameters.PrimaryScreenWidth - Width) / 2.0;
-            Top = (SystemParameters.PrimaryScreenHeight - Height) / 3.0;
+            Top = SystemParameters.PrimaryScreenHeight * 0.20;
+            Background = Brushes.Transparent;
+            FontFamily = LiquidGlassTheme.UiFont;
 
-            BuildUi();
+            BuildUI();
 
-            SourceInitialized += (s, e) =>
-            {
-                IntPtr hwnd = new WindowInteropHelper(this).Handle;
-                DwmBlurHelper.ApplyBlur(hwnd, true);
-                DwmBlurHelper.MakeToolWindow(hwnd);
-            };
-
-            Deactivated += (s, e) =>
-            {
-                HideSpotlight();
-            };
-
-            KeyDown += OnWindowKeyDown;
+            Deactivated += delegate { Hide(); };
+            PreviewKeyDown += OnWindowPreviewKeyDown;
         }
 
-        private void BuildUi()
+        private void BuildUI()
         {
-            var glass = new Border
+            Border card = new Border();
+            card.Margin = new Thickness(16);
+            card.CornerRadius = new CornerRadius(22);
+            card.Background = LiquidGlassTheme.CreateGlassBrush(230, 244);
+            card.BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush();
+            card.BorderThickness = new Thickness(1);
+            card.Padding = new Thickness(16);
+            card.Effect = new DropShadowEffect
             {
-                Background = LiquidGlassTheme.CreateGlassBrush(190, 230),
-                BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush(),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(16),
-                Padding = new Thickness(14)
+                BlurRadius = 32,
+                ShadowDepth = 10,
+                Opacity = 0.65,
+                Color = Colors.Black
             };
 
-            var grid = new Grid();
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Search input
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // Results
+            StackPanel root = new StackPanel();
 
-            // Search Header
-            var searchBorder = new Border
-            {
-                Height = 48,
-                CornerRadius = new CornerRadius(10),
-                Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
-                Padding = new Thickness(12, 0, 12, 0),
-                Margin = new Thickness(0, 0, 0, 10)
-            };
+            Grid searchHeader = new Grid();
+            searchHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            searchHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            searchHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            var headerGrid = new Grid();
-            headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-            var iconTxt = new TextBlock
+            TextBlock lens = new TextBlock
             {
                 Text = "🔍",
                 FontSize = 18,
-                Foreground = Brushes.White,
+                Foreground = new SolidColorBrush(Color.FromArgb(190, 255, 255, 255)),
                 VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 12, 0)
+                Margin = new Thickness(4, 0, 12, 0)
             };
-            Grid.SetColumn(iconTxt, 0);
-            headerGrid.Children.Add(iconTxt);
+            Grid.SetColumn(lens, 0);
+            searchHeader.Children.Add(lens);
 
-            _txtSearch = new TextBox
+            _hintText = new TextBlock
             {
-                FontFamily = LiquidGlassTheme.UiFont,
-                FontSize = 18,
-                Foreground = Brushes.White,
-                Background = Brushes.Transparent,
-                BorderThickness = new Thickness(0),
+                Text = "Программы, >команды, математика (24*15), ?веб-поиск, $терминал...",
+                FontSize = 15,
+                Foreground = new SolidColorBrush(Color.FromArgb(120, 235, 235, 245)),
                 VerticalAlignment = VerticalAlignment.Center,
-                CaretBrush = Brushes.White
+                IsHitTestVisible = false
             };
-            _txtSearch.TextChanged += (s, e) => UpdateResults();
-            Grid.SetColumn(_txtSearch, 1);
-            headerGrid.Children.Add(_txtSearch);
+            Grid.SetColumn(_hintText, 1);
+            searchHeader.Children.Add(_hintText);
 
-            searchBorder.Child = headerGrid;
-            Grid.SetRow(searchBorder, 0);
-            grid.Children.Add(searchBorder);
+            _searchBox = new TextBox();
+            _searchBox.FontSize = 19;
+            _searchBox.Foreground = Brushes.White;
+            _searchBox.CaretBrush = LiquidGlassTheme.AccentBlueBrush;
+            _searchBox.Background = Brushes.Transparent;
+            _searchBox.BorderThickness = new Thickness(0);
+            _searchBox.VerticalAlignment = VerticalAlignment.Center;
+            _searchBox.TextChanged += OnSearchTextChanged;
+            Grid.SetColumn(_searchBox, 1);
+            searchHeader.Children.Add(_searchBox);
 
-            // Results List
-            _scrollViewer = new ScrollViewer
+            Border footerHint = new Border
             {
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+                CornerRadius = new CornerRadius(6),
+                Background = new SolidColorBrush(Color.FromArgb(35, 255, 255, 255)),
+                Padding = new Thickness(8, 3, 8, 3),
+                VerticalAlignment = VerticalAlignment.Center
             };
-
-            _resultsStack = new StackPanel
+            footerHint.Child = new TextBlock
             {
-                Orientation = Orientation.Vertical
+                Text = "↑↓ выбор • Enter запуск • Tab папка",
+                FontSize = 10.5,
+                Foreground = new SolidColorBrush(Color.FromArgb(180, 235, 235, 245))
             };
+            Grid.SetColumn(footerHint, 2);
+            searchHeader.Children.Add(footerHint);
 
-            _scrollViewer.Content = _resultsStack;
-            Grid.SetRow(_scrollViewer, 1);
-            grid.Children.Add(_scrollViewer);
+            root.Children.Add(searchHeader);
 
-            glass.Child = grid;
-            Content = glass;
+            Border sep = new Border
+            {
+                Height = 1,
+                Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
+                Margin = new Thickness(0, 12, 0, 10)
+            };
+            root.Children.Add(sep);
+
+            _resultsPanel = new StackPanel();
+            root.Children.Add(_resultsPanel);
+
+            card.Child = root;
+            Content = card;
+
+            PopulateResults("");
         }
 
-        private void UpdateResults()
+        public void ShowAndFocus()
         {
-            _resultsStack.Children.Clear();
-            _currentItems.Clear();
-            _selectedIndex = -1;
-
-            string query = _txtSearch.Text.Trim();
-            if (string.IsNullOrEmpty(query)) return;
-
-            // 1. Check Terminal command prefix '>'
-            if (query.StartsWith(">"))
-            {
-                string cmd = query.Substring(1).Trim();
-                var item = new SpotlightResultItem
-                {
-                    Title = "Выполнить в терминале: " + cmd,
-                    Subtitle = "Запуск через cmd /k",
-                    Badge = "Команда",
-                    OnExecute = () => Process.Start("cmd.exe", "/k " + cmd)
-                };
-                AddResult(item);
-            }
-
-            // 2. Check Math Expression
-            string mathResult = TryEvaluateMath(query);
-            if (!string.IsNullOrEmpty(mathResult))
-            {
-                var item = new SpotlightResultItem
-                {
-                    Title = "= " + mathResult,
-                    Subtitle = "Калькулятор (Enter — скопировать в буфер)",
-                    Badge = "Вычисление",
-                    OnExecute = () => Clipboard.SetText(mathResult)
-                };
-                AddResult(item);
-            }
-
-            // 3. Search Installed Apps
-            string qLower = query.ToLowerInvariant();
-            var apps = ShellController.Instance.AppCatalog.GetCatalog()
-                .Where(a => a.Title.ToLowerInvariant().Contains(qLower) || a.Category.ToLowerInvariant().Contains(qLower))
-                .Take(7)
-                .ToList();
-
-            foreach (var app in apps)
-            {
-                var item = new SpotlightResultItem
-                {
-                    Title = app.Title,
-                    Subtitle = app.Category + (!string.IsNullOrEmpty(app.Cmd) ? " • " + app.Cmd : ""),
-                    Badge = "Приложение",
-                    Icon = app.IconSource,
-                    OnExecute = () => ShellController.Instance.LaunchApp(app.Cmd, app.Args),
-                    OnAdminExecute = () =>
-                    {
-                        try
-                        {
-                            Process.Start(new ProcessStartInfo { FileName = app.Cmd, Arguments = app.Args ?? "", Verb = "runas", UseShellExecute = true });
-                        }
-                        catch { }
-                    }
-                };
-                AddResult(item);
-            }
-
-            if (_currentItems.Count > 0)
-            {
-                _selectedIndex = 0;
-                HighlightSelection();
-            }
+            Left = (SystemParameters.PrimaryScreenWidth - Width) / 2.0;
+            Top = SystemParameters.PrimaryScreenHeight * 0.20;
+            _searchBox.Text = "";
+            _hintText.Visibility = Visibility.Visible;
+            PopulateResults("");
+            Show();
+            Activate();
+            _searchBox.Focus();
         }
 
-        private void AddResult(SpotlightResultItem item)
+        private void OnSearchTextChanged(object sender, TextChangedEventArgs e)
         {
-            _currentItems.Add(item);
-            int idx = _currentItems.Count - 1;
-
-            var card = new Border
-            {
-                Height = 44,
-                CornerRadius = new CornerRadius(8),
-                Background = Brushes.Transparent,
-                Padding = new Thickness(10, 4, 10, 4),
-                Margin = new Thickness(0, 2, 0, 2),
-                Cursor = Cursors.Hand
-            };
-
-            var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // Icon
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // Title / Subtitle
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // Badge
-
-            if (item.Icon != null)
-            {
-                var img = new Image
-                {
-                    Width = 28,
-                    Height = 28,
-                    Source = item.Icon,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Margin = new Thickness(0, 0, 10, 0)
-                };
-                Grid.SetColumn(img, 0);
-                grid.Children.Add(img);
-            }
-
-            var textStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-            var title = new TextBlock
-            {
-                Text = item.Title,
-                FontFamily = LiquidGlassTheme.UiFont,
-                FontSize = 13,
-                FontWeight = FontWeights.Medium,
-                Foreground = Brushes.White,
-                TextTrimming = TextTrimming.CharacterEllipsis
-            };
-            textStack.Children.Add(title);
-
-            if (!string.IsNullOrEmpty(item.Subtitle))
-            {
-                var sub = new TextBlock
-                {
-                    Text = item.Subtitle,
-                    FontFamily = LiquidGlassTheme.UiFont,
-                    FontSize = 11,
-                    Foreground = new SolidColorBrush(Color.FromArgb(160, 255, 255, 255)),
-                    TextTrimming = TextTrimming.CharacterEllipsis
-                };
-                textStack.Children.Add(sub);
-            }
-            Grid.SetColumn(textStack, 1);
-            grid.Children.Add(textStack);
-
-            if (!string.IsNullOrEmpty(item.Badge))
-            {
-                var badge = new Border
-                {
-                    Background = new SolidColorBrush(Color.FromArgb(35, 255, 255, 255)),
-                    CornerRadius = new CornerRadius(5),
-                    Padding = new Thickness(6, 2, 6, 2),
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-                badge.Child = new TextBlock
-                {
-                    Text = item.Badge,
-                    FontFamily = LiquidGlassTheme.UiFont,
-                    FontSize = 10,
-                    Foreground = Brushes.White
-                };
-                Grid.SetColumn(badge, 2);
-                grid.Children.Add(badge);
-            }
-
-            card.Child = grid;
-
-            card.MouseEnter += (s, e) =>
-            {
-                _selectedIndex = idx;
-                HighlightSelection();
-            };
-
-            card.MouseLeftButtonUp += (s, e) =>
-            {
-                HideSpotlight();
-                if (item.OnExecute != null) item.OnExecute();
-            };
-
-            _resultsStack.Children.Add(card);
+            _hintText.Visibility = string.IsNullOrEmpty(_searchBox.Text) ? Visibility.Visible : Visibility.Hidden;
+            PopulateResults(_searchBox.Text.Trim());
         }
 
-        private void HighlightSelection()
-        {
-            for (int i = 0; i < _resultsStack.Children.Count; i++)
-            {
-                var card = _resultsStack.Children[i] as Border;
-                if (card != null)
-                {
-                    if (i == _selectedIndex)
-                    {
-                        card.Background = LiquidGlassTheme.AccentBlueBrush;
-                    }
-                    else
-                    {
-                        card.Background = Brushes.Transparent;
-                    }
-                }
-            }
-        }
-
-        private void OnWindowKeyDown(object sender, KeyEventArgs e)
+        private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
         {
             if (e.Key == Key.Escape)
             {
-                HideSpotlight();
                 e.Handled = true;
+                Hide();
             }
             else if (e.Key == Key.Down)
             {
                 if (_currentItems.Count > 0)
                 {
-                    _selectedIndex = (_selectedIndex + 1) % _currentItems.Count;
-                    HighlightSelection();
                     e.Handled = true;
+                    _selectedIndex = (_selectedIndex + 1) % _currentItems.Count;
+                    UpdateSelectionVisuals();
                 }
             }
             else if (e.Key == Key.Up)
             {
                 if (_currentItems.Count > 0)
                 {
-                    _selectedIndex = (_selectedIndex - 1 + _currentItems.Count) % _currentItems.Count;
-                    HighlightSelection();
                     e.Handled = true;
+                    _selectedIndex = (_selectedIndex - 1 + _currentItems.Count) % _currentItems.Count;
+                    UpdateSelectionVisuals();
+                }
+            }
+            else if (e.Key == Key.Tab)
+            {
+                if (_selectedIndex >= 0 && _selectedIndex < _currentItems.Count)
+                {
+                    string loc = _currentItems[_selectedIndex].FileLocation;
+                    if (!string.IsNullOrEmpty(loc))
+                    {
+                        e.Handled = true;
+                        Hide();
+                        ShellController.OpenFileLocation(loc);
+                    }
                 }
             }
             else if (e.Key == Key.Enter)
             {
+                e.Handled = true;
                 if (_selectedIndex >= 0 && _selectedIndex < _currentItems.Count)
                 {
-                    var item = _currentItems[_selectedIndex];
-                    HideSpotlight();
-                    if (item.OnExecute != null) item.OnExecute();
-                    e.Handled = true;
+                    SpotlightResultItem sel = _currentItems[_selectedIndex];
+                    bool ctrlShift = (Keyboard.Modifiers & ModifierKeys.Control) != 0 && (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
+                    Hide();
+                    if (ctrlShift && sel.OnAdminExecute != null)
+                        sel.OnAdminExecute();
+                    else if (sel.OnExecute != null)
+                        sel.OnExecute();
                 }
             }
         }
 
-        private string TryEvaluateMath(string expr)
+        private void UpdateSelectionVisuals()
         {
-            try
+            for (int i = 0; i < _resultRows.Count; i++)
             {
-                // Only evaluate if string contains numbers and math operators
-                if (!expr.Any(char.IsDigit) || !expr.Any(c => "+-*/%^".Contains(c))) return null;
-
-                var dt = new DataTable();
-                var val = dt.Compute(expr.Replace(',', '.'), "");
-                if (val != null) return val.ToString();
+                _resultRows[i].Background = (i == _selectedIndex)
+                    ? new SolidColorBrush(Color.FromArgb(125, 10, 132, 255))
+                    : Brushes.Transparent;
             }
-            catch { }
-            return null;
         }
 
-        public void ShowSpotlight()
+        private void PopulateResults(string query)
         {
-            Visibility = Visibility.Visible;
-            IsHitTestVisible = true;
-            _txtSearch.Text = "";
-            _resultsStack.Children.Clear();
+            _resultsPanel.Children.Clear();
             _currentItems.Clear();
-            _selectedIndex = -1;
+            _resultRows.Clear();
+            _selectedIndex = 0;
 
-            Activate();
-            _txtSearch.Focus();
+            bool cmdMode = query.StartsWith(">");
+            string cleanQuery = cmdMode ? query.Substring(1).Trim() : query;
+
+            // 1. Math expression evaluation
+            if (!cmdMode && !string.IsNullOrEmpty(query) && !query.StartsWith("?") && !query.StartsWith("$"))
+            {
+                try
+                {
+                    System.Data.DataTable dt = new System.Data.DataTable();
+                    object val = dt.Compute(query, "");
+                    if (val != null && !(val is DBNull))
+                    {
+                        double num;
+                        if (double.TryParse(val.ToString(), out num))
+                        {
+                            string resStr = val.ToString();
+                            AddResultItem(new SpotlightResultItem
+                            {
+                                Title = query + " = " + resStr,
+                                Subtitle = "Нажмите Enter, чтобы скопировать результат в буфер обмена",
+                                Badge = "Калькулятор",
+                                Icon = ShellController.Instance.GetIcon("calculator.png"),
+                                OnExecute = delegate { try { Clipboard.SetText(resStr); } catch { } }
+                            });
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            // 2. Terminal command ($...)
+            if (query.StartsWith("$") && query.Length > 1)
+            {
+                string termCmd = query.Substring(1).Trim();
+                AddResultItem(new SpotlightResultItem
+                {
+                    Title = "Выполнить в Терминале: " + termCmd,
+                    Subtitle = "PowerShell / Windows Terminal",
+                    Badge = "Терминал",
+                    Icon = ShellController.Instance.GetIcon("terminal.png"),
+                    OnExecute = delegate { ShellController.RunProcess("powershell.exe", "-NoExit -Command \"" + termCmd + "\""); }
+                });
+            }
+
+            // 3. Web search (?...)
+            if (query.StartsWith("?") && query.Length > 1)
+            {
+                string webQ = query.Substring(1).Trim();
+                AddResultItem(new SpotlightResultItem
+                {
+                    Title = "Найти в Google: «" + webQ + "»",
+                    Subtitle = "Открыть в браузере по умолчанию",
+                    Badge = "Веб-поиск",
+                    Icon = ShellController.Instance.GetIcon("chrome.png"),
+                    OnExecute = delegate { ShellController.RunProcess("https://www.google.com/search?q=" + Uri.EscapeDataString(webQ), ""); }
+                });
+            }
+
+            // 4. Built-in Launcher & System Commands
+            AddMatchingCommand(cleanQuery, cmdMode, "Настройки лаунчера", "Управление панелями, Dock, виджетами и автозапуском", "settings.png",
+                delegate { ShellController.Instance.ShowLauncherSettings(); });
+            AddMatchingCommand(cleanQuery, cmdMode, "Все приложения", "Открыть полноэкранный каталог программ (Win)", "launchpad.png",
+                delegate { ShellController.Instance.ToggleLaunchpad(); });
+            AddMatchingCommand(cleanQuery, cmdMode, "Обзор активных окон", "Показать все открытые окна и переключиться", "mission-control.png",
+                delegate { ShellController.Instance.ToggleWindowSwitcher(); });
+            AddMatchingCommand(cleanQuery, cmdMode, "Переключить тему (Тёмная / Светлая)", "Смена оформления Windows и обоев 6K", "wallpaper.png",
+                delegate { ShellController.Instance.ToggleDarkMode(); });
+            AddMatchingCommand(cleanQuery, cmdMode, "Показать / Скрыть виджеты рабочего стола", "Виджеты часов, ресурсов ПК и заметок", "control-center.png",
+                delegate
+                {
+                    ShellController.Instance.Config.ShowDesktopWidgets = !ShellController.Instance.Config.ShowDesktopWidgets;
+                    ShellController.Instance.SaveConfig();
+                    ShellController.Instance.ApplyModuleVisibility();
+                });
+            AddMatchingCommand(cleanQuery, cmdMode, "Показать / Скрыть значки рабочего стола", "Переключение видимости ярлыков стола", "desktop.png",
+                delegate { NativeMethods.ToggleDesktopIcons(); });
+            AddMatchingCommand(cleanQuery, cmdMode, "Очистить Корзину", "Удалить все файлы из Корзины Windows", "trash-full.png",
+                delegate { NativeMethods.SHEmptyRecycleBin(IntPtr.Zero, null, 0); });
+            AddMatchingCommand(cleanQuery, cmdMode, "Выход из лаунчера (вернуть панель Windows)", "Закрыть Tahoe Launcher и вернуть стандартный интерфейс", "activity-monitor.png",
+                delegate { ShellController.Instance.ShutdownAndRestoreWindows(); });
+
+            // 5. Installed Applications Search
+            if (!cmdMode && !query.StartsWith("?") && !query.StartsWith("$"))
+            {
+                List<AppCatalogEntry> apps = ShellController.Instance.InstalledApps;
+                for (int i = 0; i < apps.Count && _currentItems.Count < 7; i++)
+                {
+                    AppCatalogEntry item = apps[i];
+                    if (!string.IsNullOrEmpty(cleanQuery) &&
+                        item.Title.IndexOf(cleanQuery, StringComparison.OrdinalIgnoreCase) < 0 &&
+                        IOPath.GetFileNameWithoutExtension(item.Cmd).IndexOf(cleanQuery, StringComparison.OrdinalIgnoreCase) < 0)
+                        continue;
+
+                    AppCatalogEntry cap = item;
+                    AddResultItem(new SpotlightResultItem
+                    {
+                        Title = cap.Title,
+                        Subtitle = cap.Category + " • " + IOPath.GetFileName(cap.Cmd),
+                        Badge = "Приложение",
+                        Icon = cap.IconSource ?? ShellController.Instance.GetIcon("finder.png"),
+                        FileLocation = cap.Cmd,
+                        OnExecute = delegate { ShellController.RunProcess(cap.Cmd, cap.Args); },
+                        OnAdminExecute = delegate { ShellController.RunProcessEx(cap.Cmd, cap.Args, true); }
+                    });
+                }
+            }
+
+            // 6. Fallback web search if query didn't match or user wants web search
+            if (!string.IsNullOrEmpty(cleanQuery) && _currentItems.Count < 7 && !cmdMode)
+            {
+                string qCopy = cleanQuery;
+                AddResultItem(new SpotlightResultItem
+                {
+                    Title = "Искать в Интернете: «" + qCopy + "»",
+                    Subtitle = "Открыть результаты поиска Google в браузере",
+                    Badge = "Интернет",
+                    Icon = ShellController.Instance.GetIcon("chrome.png"),
+                    OnExecute = delegate { ShellController.RunProcess("https://www.google.com/search?q=" + Uri.EscapeDataString(qCopy), ""); }
+                });
+            }
+
+            UpdateSelectionVisuals();
         }
 
-        public void HideSpotlight()
+        private void AddMatchingCommand(string query, bool cmdMode, string title, string subtitle, string iconFile, Action action)
         {
-            Visibility = Visibility.Collapsed;
-            IsHitTestVisible = false;
+            if (_currentItems.Count >= 7) return;
+            if (!cmdMode && string.IsNullOrEmpty(query)) return;
+            if (!string.IsNullOrEmpty(query) &&
+                title.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0 &&
+                subtitle.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0)
+                return;
+
+            AddResultItem(new SpotlightResultItem
+            {
+                Title = title,
+                Subtitle = subtitle,
+                Badge = "Команда",
+                Icon = ShellController.Instance.GetIcon(iconFile),
+                OnExecute = action
+            });
+        }
+
+        private void AddResultItem(SpotlightResultItem item)
+        {
+            if (_currentItems.Count >= 7) return;
+            int idx = _currentItems.Count;
+            _currentItems.Add(item);
+
+            Border row = new Border
+            {
+                CornerRadius = new CornerRadius(11),
+                Padding = new Thickness(10, 7, 10, 7),
+                Margin = new Thickness(0, 1, 0, 1),
+                Background = Brushes.Transparent,
+                Cursor = Cursors.Hand
+            };
+
+            Grid g = new Grid();
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            Image icon = new Image
+            {
+                Source = item.Icon ?? ShellController.Instance.GetIcon("finder.png"),
+                Width = 30,
+                Height = 30,
+                Margin = new Thickness(0, 0, 12, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            RenderOptions.SetBitmapScalingMode(icon, BitmapScalingMode.HighQuality);
+            Grid.SetColumn(icon, 0);
+            g.Children.Add(icon);
+
+            StackPanel texts = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            texts.Children.Add(new TextBlock
+            {
+                Text = item.Title,
+                FontSize = 13.5,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = Brushes.White,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            });
+            if (!string.IsNullOrEmpty(item.Subtitle))
+            {
+                texts.Children.Add(new TextBlock
+                {
+                    Text = item.Subtitle,
+                    FontSize = 11,
+                    Foreground = new SolidColorBrush(Color.FromArgb(165, 235, 235, 245)),
+                    TextTrimming = TextTrimming.CharacterEllipsis
+                });
+            }
+            Grid.SetColumn(texts, 1);
+            g.Children.Add(texts);
+
+            if (!string.IsNullOrEmpty(item.Badge))
+            {
+                Border badge = new Border
+                {
+                    CornerRadius = new CornerRadius(6),
+                    Background = new SolidColorBrush(Color.FromArgb(38, 255, 255, 255)),
+                    Padding = new Thickness(8, 2, 8, 2),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(10, 0, 0, 0)
+                };
+                badge.Child = new TextBlock
+                {
+                    Text = item.Badge,
+                    FontSize = 10.5,
+                    Foreground = new SolidColorBrush(Color.FromArgb(200, 235, 235, 245))
+                };
+                Grid.SetColumn(badge, 2);
+                g.Children.Add(badge);
+            }
+
+            row.Child = g;
+
+            int capturedIdx = idx;
+            SpotlightResultItem capturedItem = item;
+            row.MouseEnter += delegate
+            {
+                _selectedIndex = capturedIdx;
+                UpdateSelectionVisuals();
+            };
+            row.MouseLeftButtonDown += delegate
+            {
+                Hide();
+                if (capturedItem.OnExecute != null) capturedItem.OnExecute();
+            };
+
+            _resultRows.Add(row);
+            _resultsPanel.Children.Add(row);
         }
     }
+    // =========================================================================
+    // 6. FULLSCREEN APPS LAUNCHER (Приложения — Категории, ПКМ-меню, Живой каталог)
+    // =========================================================================
 }

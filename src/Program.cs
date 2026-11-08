@@ -1,88 +1,92 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
-using System.Linq;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
+using System.Web.Script.Serialization;
 using System.Windows;
-using MacOSTahoe.Core;
-using MacOSTahoe.Native;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Data;
+using System.Windows.Input;
+using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
+using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
+using System.Windows.Threading;
+using Microsoft.Win32;
+using IOPath = System.IO.Path;
+using WpfPath = System.Windows.Shapes.Path;
 
 namespace MacOSTahoe
 {
     public static class Program
     {
-        private const string MutexName = "Local\\MacOSTahoeLauncher_SingleInstance";
-
         [STAThread]
         public static void Main(string[] args)
         {
-            if (args != null && args.Length > 0)
+            try { NativeMethods.SetProcessDpiAwareness(2); }
+            catch { try { NativeMethods.SetProcessDPIAware(); } catch { } }
+
+            bool quitOnly = false;
+            if (args != null)
             {
-                string firstArg = args[0].ToLowerInvariant();
-                if (firstArg == "/kill" || firstArg == "/stop" || firstArg == "--kill")
+                for (int i = 0; i < args.Length; i++)
                 {
-                    KillRunningInstances();
-                    DwmBlurHelper.SetWindowsTaskbarVisibility(true);
-                    DwmBlurHelper.RestoreWorkArea();
-                    return;
+                    if (string.Equals(args[i], "--quit", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(args[i], "-x", StringComparison.OrdinalIgnoreCase))
+                    {
+                        quitOnly = true;
+                    }
                 }
-                else if (firstArg == "/restart" || firstArg == "--restart")
+            }
+
+            int myPid = Process.GetCurrentProcess().Id;
+            foreach (Process p in Process.GetProcessesByName("MacOSTahoe"))
+            {
+                if (p.Id != myPid)
                 {
-                    KillRunningInstances(true);
-                    Thread.Sleep(600);
+                    try { p.Kill(); } catch { }
                 }
+            }
+
+            if (quitOnly)
+            {
+                NativeMethods.RestoreNativeTaskbars();
+                NativeMethods.RECT fullRect = new NativeMethods.RECT
+                {
+                    Left = 0,
+                    Top = 0,
+                    Right = (int)SystemParameters.PrimaryScreenWidth,
+                    Bottom = (int)SystemParameters.PrimaryScreenHeight
+                };
+                NativeMethods.SystemParametersInfoRect(0x002F, 0, ref fullRect, 0);
+                return;
             }
 
             Mutex mutex = null;
             bool hasHandle = false;
             try
             {
-                mutex = new Mutex(false, MutexName);
-                try
-                {
-                    hasHandle = mutex.WaitOne(300, false);
-                }
-                catch (AbandonedMutexException)
-                {
-                    hasHandle = true;
-                }
+                mutex = new Mutex(false, "Local\\MacOSTahoeLauncher_SingleInstance");
+                try { hasHandle = mutex.WaitOne(300, false); }
+                catch (AbandonedMutexException) { hasHandle = true; }
 
-                if (!hasHandle)
-                {
-                    return;
-                }
+                if (!hasHandle) return;
 
-                try
-                {
-                    Win32Api.SetProcessDpiAwareness(2);
-                }
-                catch
-                {
-                    try { Win32Api.SetProcessDPIAware(); } catch { }
-                }
-
-                var app = new Application
-                {
-                    ShutdownMode = ShutdownMode.OnExplicitShutdown
-                };
-
-                var controller = new ShellController();
-                controller.Initialize(app);
-
-                if (controller.TopBar != null)
-                {
-                    app.MainWindow = controller.TopBar;
-                }
-
+                Application app = new Application();
+                app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                ShellController controller = new ShellController();
+                controller.Start(args);
                 app.Run();
-            }
-            catch (Exception ex)
-            {
-                try
-                {
-                    File.AppendAllText(@"C:\Win11_Prep\macos\crash.log", DateTime.Now + ": " + ex + "\r\n");
-                }
-                catch { }
             }
             finally
             {
@@ -90,26 +94,7 @@ namespace MacOSTahoe
                 {
                     try { mutex.ReleaseMutex(); } catch { }
                 }
-                if (mutex != null)
-                {
-                    mutex.Dispose();
-                }
-            }
-        }
-
-        private static void KillRunningInstances(bool excludeSelf = false)
-        {
-            int currentPid = Process.GetCurrentProcess().Id;
-            var running = Process.GetProcessesByName("MacOSTahoe");
-            foreach (var p in running)
-            {
-                try
-                {
-                    if (excludeSelf && p.Id == currentPid) continue;
-                    p.Kill();
-                    p.WaitForExit(1500);
-                }
-                catch { }
+                if (mutex != null) mutex.Dispose();
             }
         }
     }

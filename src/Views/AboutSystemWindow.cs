@@ -1,235 +1,249 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
+using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
-using MacOSTahoe.Core;
-using MacOSTahoe.Native;
-using MacOSTahoe.Theme;
+using System.Windows.Shapes;
+using System.Windows.Threading;
 using Microsoft.Win32;
+using IOPath = System.IO.Path;
+using WpfPath = System.Windows.Shapes.Path;
 
-namespace MacOSTahoe.Views
+namespace MacOSTahoe
 {
     public class AboutSystemWindow : Window
     {
         public AboutSystemWindow()
         {
-            Title = "Об этом компьютере";
+            Title = "О системе";
             WindowStyle = WindowStyle.None;
             AllowsTransparency = true;
-            Background = Brushes.Transparent;
-            ShowInTaskbar = false;
             ResizeMode = ResizeMode.NoResize;
+            Topmost = true;
+            WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            Width = 360;
+            Height = 430;
+            Background = Brushes.Transparent;
+            FontFamily = LiquidGlassTheme.UiFont;
 
-            Width = 500;
-            Height = 310;
-            Left = (SystemParameters.PrimaryScreenWidth - Width) / 2.0;
-            Top = (SystemParameters.PrimaryScreenHeight - Height) / 2.5;
-
-            BuildUi();
-
-            SourceInitialized += (s, e) =>
-            {
-                IntPtr hwnd = new WindowInteropHelper(this).Handle;
-                DwmBlurHelper.ApplyBlur(hwnd, true);
-                DwmBlurHelper.MakeToolWindow(hwnd);
-            };
-
-            MouseLeftButtonDown += (s, e) => DragMove();
+            BuildUI();
         }
 
-        private void BuildUi()
+        private static string DetectCpuName()
         {
-            var glass = new Border
+            try
             {
-                Background = LiquidGlassTheme.CreateGlassBrush(200, 240),
+                RegistryKey rk = Registry.LocalMachine.OpenSubKey(@"HARDWARE\Description\System\CentralProcessor\0");
+                if (rk != null)
+                {
+                    object val = rk.GetValue("ProcessorNameString");
+                    rk.Close();
+                    if (val != null) return val.ToString().Trim();
+                }
+            }
+            catch { }
+            return string.Format("Процессор ({0} потоков)", Environment.ProcessorCount);
+        }
+
+        private static string DetectGpuName()
+        {
+            try
+            {
+                RegistryKey baseKey = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}");
+                if (baseKey != null)
+                {
+                    string[] subs = baseKey.GetSubKeyNames();
+                    for (int i = 0; i < subs.Length; i++)
+                    {
+                        if (!subs[i].StartsWith("0")) continue;
+                        RegistryKey sub = baseKey.OpenSubKey(subs[i]);
+                        if (sub != null)
+                        {
+                            object desc = sub.GetValue("DriverDesc");
+                            sub.Close();
+                            if (desc != null && !string.IsNullOrEmpty(desc.ToString()))
+                                return desc.ToString().Trim();
+                        }
+                    }
+                    baseKey.Close();
+                }
+            }
+            catch { }
+            return "DirectX 12 GPU";
+        }
+
+        private static string DetectRamSize()
+        {
+            try
+            {
+                NativeMethods.MEMORYSTATUSEX mem = new NativeMethods.MEMORYSTATUSEX();
+                mem.dwLength = (uint)Marshal.SizeOf(mem);
+                if (NativeMethods.GlobalMemoryStatusEx(ref mem))
+                {
+                    double gb = Math.Round(mem.ullTotalPhys / (1024.0 * 1024.0 * 1024.0));
+                    return string.Format("{0:0} ГБ ОЗУ", gb);
+                }
+            }
+            catch { }
+            return "16 ГБ ОЗУ";
+        }
+
+        private void BuildUI()
+        {
+            Border card = new Border
+            {
+                Margin = new Thickness(14),
+                CornerRadius = new CornerRadius(22),
+                Background = LiquidGlassTheme.CreateGlassBrush(235, 248),
                 BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush(),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(16),
-                Padding = new Thickness(24)
+                Padding = new Thickness(20, 14, 20, 20),
+                Effect = new DropShadowEffect { BlurRadius = 30, ShadowDepth = 10, Opacity = 0.65, Color = Colors.Black }
             };
 
-            var mainGrid = new Grid();
-            mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Close button
-            mainGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // Content
-            mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Buttons
-
-            // Top bar with close circle
-            var topBar = new Grid();
-            var closeBtn = new Border
+            card.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
             {
-                Width = 12,
-                Height = 12,
-                CornerRadius = new CornerRadius(6),
-                Background = new SolidColorBrush(Color.FromRgb(255, 95, 87)),
-                Cursor = Cursors.Hand,
-                HorizontalAlignment = HorizontalAlignment.Left
+                if (e.ButtonState == MouseButtonState.Pressed) DragMove();
             };
-            closeBtn.MouseLeftButtonUp += (s, e) => Close();
-            topBar.Children.Add(closeBtn);
-            Grid.SetRow(topBar, 0);
-            mainGrid.Children.Add(topBar);
 
-            // Body
-            var bodyGrid = new Grid { Margin = new Thickness(0, 14, 0, 14) };
-            bodyGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(140) });
-            bodyGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            StackPanel root = new StackPanel();
 
-            // Logo
-            var logoBorder = new Border
+            StackPanel traffic = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 16) };
+            Ellipse closeBtn = new Ellipse { Width = 12, Height = 12, Fill = new SolidColorBrush(Color.FromRgb(255, 95, 87)), Margin = new Thickness(0, 0, 8, 0), Cursor = Cursors.Hand };
+            closeBtn.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e) { e.Handled = true; Close(); };
+            Ellipse minBtn = new Ellipse { Width = 12, Height = 12, Fill = new SolidColorBrush(Color.FromRgb(254, 188, 46)), Margin = new Thickness(0, 0, 8, 0) };
+            Ellipse maxBtn = new Ellipse { Width = 12, Height = 12, Fill = new SolidColorBrush(Color.FromRgb(40, 200, 64)) };
+            traffic.Children.Add(closeBtn);
+            traffic.Children.Add(minBtn);
+            traffic.Children.Add(maxBtn);
+            root.Children.Add(traffic);
+
+            Image img = new Image
             {
-                Width = 100,
-                Height = 100,
-                CornerRadius = new CornerRadius(50),
-                Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
+                Source = ShellController.Instance.GetIcon("wallpaper.png"),
+                Width = 82,
+                Height = 82,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            var logoTxt = new TextBlock
-            {
-                Text = "",
-                FontFamily = LiquidGlassTheme.UiFont,
-                FontSize = 54,
-                Foreground = Brushes.White,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            logoBorder.Child = logoTxt;
-            Grid.SetColumn(logoBorder, 0);
-            bodyGrid.Children.Add(logoBorder);
-
-            // Specs
-            var specsStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-
-            var osTitle = new TextBlock
-            {
-                Text = "Windows 11 Tahoe Edition",
-                FontFamily = LiquidGlassTheme.UiFont,
-                FontSize = 18,
-                FontWeight = FontWeights.Bold,
-                Foreground = Brushes.White,
-                Margin = new Thickness(0, 0, 0, 4)
-            };
-            specsStack.Children.Add(osTitle);
-
-            var osVer = new TextBlock
-            {
-                Text = "Версия 24H2 (Сборка 26100.3194)",
-                FontFamily = LiquidGlassTheme.UiFont,
-                FontSize = 11,
-                Foreground = new SolidColorBrush(Color.FromArgb(180, 255, 255, 255)),
                 Margin = new Thickness(0, 0, 0, 12)
             };
-            specsStack.Children.Add(osVer);
+            RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.HighQuality);
+            root.Children.Add(img);
 
-            string cpuName = GetProcessorName();
-            string ramText = GetTotalRamText();
-            string screenText = string.Format("{0} × {1}", (int)SystemParameters.PrimaryScreenWidth, (int)SystemParameters.PrimaryScreenHeight);
-
-            specsStack.Children.Add(CreateSpecRow("Процессор", cpuName));
-            specsStack.Children.Add(CreateSpecRow("Память", ramText));
-            specsStack.Children.Add(CreateSpecRow("Дисплей", screenText));
-
-            Grid.SetColumn(specsStack, 1);
-            bodyGrid.Children.Add(specsStack);
-
-            Grid.SetRow(bodyGrid, 1);
-            mainGrid.Children.Add(bodyGrid);
-
-            // Footer button
-            var btnReport = new Border
+            root.Children.Add(new TextBlock
             {
-                Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
-                CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(14, 6, 14, 6),
-                HorizontalAlignment = HorizontalAlignment.Right,
+                Text = Environment.MachineName,
+                FontSize = 21,
+                FontWeight = FontWeights.Bold,
+                Foreground = Brushes.White,
+                HorizontalAlignment = HorizontalAlignment.Center
+            });
+
+            root.Children.Add(new TextBlock
+            {
+                Text = "Windows 11 • Tahoe Liquid Glass v26.2",
+                FontSize = 12,
+                Foreground = new SolidColorBrush(Color.FromArgb(165, 235, 235, 245)),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 2, 0, 16)
+            });
+
+            root.Children.Add(CreateSpecRow("Процессор", DetectCpuName()));
+            root.Children.Add(CreateSpecRow("Графика", DetectGpuName()));
+            root.Children.Add(CreateSpecRow("Память", DetectRamSize()));
+            root.Children.Add(CreateSpecRow("Каталог", string.Format("{0} приложений", ShellController.Instance.InstalledApps.Count)));
+
+            StackPanel btnRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 20, 0, 0)
+            };
+
+            Border settingsBtn = new Border
+            {
+                CornerRadius = new CornerRadius(8),
+                Background = LiquidGlassTheme.AccentBlueBrush,
+                Padding = new Thickness(12, 6, 12, 6),
+                Margin = new Thickness(0, 0, 8, 0),
                 Cursor = Cursors.Hand
             };
-            var txtReport = new TextBlock
+            settingsBtn.Child = new TextBlock { Text = "Настройки лаунчера", Foreground = Brushes.White, FontSize = 12, FontWeight = FontWeights.SemiBold };
+            settingsBtn.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
             {
-                Text = "Сведения о системе...",
-                FontFamily = LiquidGlassTheme.UiFont,
-                FontSize = 11,
-                Foreground = Brushes.White
+                e.Handled = true;
+                Close();
+                ShellController.Instance.ShowLauncherSettings();
             };
-            btnReport.Child = txtReport;
-            btnReport.MouseLeftButtonUp += (s, e) =>
+            btnRow.Children.Add(settingsBtn);
+
+            Border moreBtn = new Border
             {
-                try { Process.Start("msinfo32.exe"); } catch { }
+                CornerRadius = new CornerRadius(8),
+                Background = new SolidColorBrush(Color.FromArgb(55, 255, 255, 255)),
+                Padding = new Thickness(12, 6, 12, 6),
+                Cursor = Cursors.Hand
             };
+            moreBtn.Child = new TextBlock { Text = "Параметры ОС...", Foreground = Brushes.White, FontSize = 12, FontWeight = FontWeights.Medium };
+            moreBtn.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
+            {
+                e.Handled = true;
+                ShellController.RunProcess("explorer.exe", "ms-settings:about");
+                Close();
+            };
+            btnRow.Children.Add(moreBtn);
 
-            Grid.SetRow(btnReport, 2);
-            mainGrid.Children.Add(btnReport);
+            root.Children.Add(btnRow);
 
-            glass.Child = mainGrid;
-            Content = glass;
+            card.Child = root;
+            Content = card;
         }
 
-        private Grid CreateSpecRow(string label, string val)
+        private FrameworkElement CreateSpecRow(string key, string val)
         {
-            var g = new Grid { Margin = new Thickness(0, 2, 0, 2) };
+            Grid g = new Grid { Margin = new Thickness(0, 4, 0, 4) };
             g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(85) });
             g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-            var lbl = new TextBlock
+            TextBlock k = new TextBlock
             {
-                Text = label,
-                FontFamily = LiquidGlassTheme.UiFont,
-                FontSize = 11,
-                Foreground = new SolidColorBrush(Color.FromArgb(160, 255, 255, 255))
+                Text = key,
+                FontSize = 11.5,
+                Foreground = new SolidColorBrush(Color.FromArgb(165, 235, 235, 245)),
+                TextAlignment = TextAlignment.Right,
+                Margin = new Thickness(0, 0, 12, 0)
             };
-            Grid.SetColumn(lbl, 0);
-            g.Children.Add(lbl);
+            Grid.SetColumn(k, 0);
+            g.Children.Add(k);
 
-            var v = new TextBlock
+            TextBlock v = new TextBlock
             {
                 Text = val,
-                FontFamily = LiquidGlassTheme.UiFont,
-                FontSize = 11,
+                FontSize = 11.5,
+                FontWeight = FontWeights.Medium,
                 Foreground = Brushes.White,
                 TextTrimming = TextTrimming.CharacterEllipsis
             };
             Grid.SetColumn(v, 1);
             g.Children.Add(v);
-
             return g;
         }
-
-        private string GetProcessorName()
-        {
-            try
-            {
-                using (var key = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\CentralProcessor\0"))
-                {
-                    if (key != null)
-                    {
-                        var name = key.GetValue("ProcessorNameString") as string;
-                        if (!string.IsNullOrEmpty(name)) return name.Trim();
-                    }
-                }
-            }
-            catch { }
-            return Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER") ?? "AMD Ryzen / Intel Core";
-        }
-
-        private string GetTotalRamText()
-        {
-            try
-            {
-                var mem = new MEMORYSTATUSEX { dwLength = (uint)Marshal.SizeOf(typeof(MEMORYSTATUSEX)) };
-                if (Win32Api.GlobalMemoryStatusEx(ref mem))
-                {
-                    double gb = mem.ullTotalPhys / (1024.0 * 1024.0 * 1024.0);
-                    return string.Format("{0:F0} ГБ", Math.Round(gb));
-                }
-            }
-            catch { }
-            return "16 ГБ";
-        }
     }
+
 }

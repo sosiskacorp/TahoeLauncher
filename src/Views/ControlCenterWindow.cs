@@ -1,304 +1,300 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
-using MacOSTahoe.Core;
-using MacOSTahoe.Native;
-using MacOSTahoe.Theme;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
+using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
+using System.Windows.Threading;
+using Microsoft.Win32;
+using IOPath = System.IO.Path;
+using WpfPath = System.Windows.Shapes.Path;
 
-namespace MacOSTahoe.Views
+namespace MacOSTahoe
 {
     public class ControlCenterWindow : Window
     {
-        private Border _toggleDarkMode;
-        private Border _toggleDockHide;
-        private TextBlock _txtUptime;
-        private TextBlock _txtRam;
+        private Border _darkModeTile;
+        private TextBlock _darkModeSub;
+        private Border _iconsTile;
+        private TextBlock _iconsSub;
+        private Border _widgetsTile;
+        private TextBlock _widgetsSub;
+        private Border _dockHideTile;
+        private TextBlock _dockHideSub;
 
         public ControlCenterWindow()
         {
-            Title = "ControlCenterWindow";
+            Title = "Пункт управления";
             WindowStyle = WindowStyle.None;
             AllowsTransparency = true;
-            Background = Brushes.Transparent;
+            ResizeMode = ResizeMode.NoResize;
             Topmost = true;
             ShowInTaskbar = false;
-            ResizeMode = ResizeMode.NoResize;
+            Width = 350;
+            Height = 490;
+            Background = Brushes.Transparent;
+            FontFamily = LiquidGlassTheme.UiFont;
 
-            Visibility = Visibility.Collapsed;
-            IsHitTestVisible = false;
+            BuildUI();
 
-            Width = 320;
-            Height = 360;
-            Left = SystemParameters.PrimaryScreenWidth - Width - 14;
-            Top = 40;
-
-            BuildUi();
-
-            SourceInitialized += (s, e) =>
+            Deactivated += delegate(object s, EventArgs e)
             {
-                IntPtr hwnd = new WindowInteropHelper(this).Handle;
-                DwmBlurHelper.ApplyBlur(hwnd, true);
-                DwmBlurHelper.MakeToolWindow(hwnd);
-            };
-
-            Deactivated += (s, e) =>
-            {
-                HideControlCenter();
+                Hide();
             };
         }
 
-        private void BuildUi()
+        private void BuildUI()
         {
-            var glass = new Border
+            Border card = new Border();
+            card.Margin = new Thickness(12);
+            card.CornerRadius = new CornerRadius(24);
+            card.Background = LiquidGlassTheme.CreateGlassBrush(226, 240);
+            card.BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush();
+            card.BorderThickness = new Thickness(1);
+            card.Padding = new Thickness(14);
+            card.Effect = new DropShadowEffect
             {
-                Background = LiquidGlassTheme.CreateGlassBrush(180, 220),
-                BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush(),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(16),
-                Padding = new Thickness(14)
+                BlurRadius = 28,
+                ShadowDepth = 8,
+                Opacity = 0.6,
+                Color = Colors.Black
             };
 
-            var stack = new StackPanel { Orientation = Orientation.Vertical };
+            StackPanel root = new StackPanel();
 
-            // Title
-            var title = new TextBlock
+            Grid topGrid = new Grid();
+            topGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            topGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) });
+            topGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            Border connCard = CreateGlassTile();
+            connCard.Padding = new Thickness(12, 10, 12, 10);
+            StackPanel connStack = new StackPanel();
+            connStack.Children.Add(CreateConnRow("Wi-Fi", "Подключено", true, delegate() { ShellController.RunProcess("explorer.exe", "ms-settings:network-wifi"); }));
+            connStack.Children.Add(CreateConnRow("Bluetooth", "Вкл.", true, delegate() { ShellController.RunProcess("explorer.exe", "ms-settings:bluetooth"); }));
+            connStack.Children.Add(CreateConnRow("Лаунчер", "Настройки", true, delegate() { Hide(); ShellController.Instance.ShowLauncherSettings(); }));
+            connCard.Child = connStack;
+            Grid.SetColumn(connCard, 0);
+            topGrid.Children.Add(connCard);
+
+            StackPanel rightCol = new StackPanel();
+            _darkModeTile = CreateActionTile("Оформление", "Тёмная тема", true, out _darkModeSub, delegate()
             {
-                Text = "Пункт управления",
-                FontFamily = LiquidGlassTheme.UiFont,
-                FontSize = 14,
+                ShellController.Instance.ToggleDarkMode();
+                RefreshState();
+            });
+            _darkModeTile.Margin = new Thickness(0, 0, 0, 10);
+            rightCol.Children.Add(_darkModeTile);
+
+            _iconsTile = CreateActionTile("Значки стола", "Показаны", true, out _iconsSub, delegate()
+            {
+                NativeMethods.ToggleDesktopIcons();
+                RefreshState();
+            });
+            rightCol.Children.Add(_iconsTile);
+
+            Grid.SetColumn(rightCol, 2);
+            topGrid.Children.Add(rightCol);
+            root.Children.Add(topGrid);
+
+            _widgetsTile = CreateActionTile("Виджеты рабочего стола", "Включены", true, out _widgetsSub, delegate()
+            {
+                ShellController.Instance.Config.ShowDesktopWidgets = !ShellController.Instance.Config.ShowDesktopWidgets;
+                ShellController.Instance.SaveConfig();
+                ShellController.Instance.ApplyModuleVisibility();
+                RefreshState();
+            });
+            _widgetsTile.Margin = new Thickness(0, 10, 0, 0);
+            root.Children.Add(_widgetsTile);
+
+            _dockHideTile = CreateActionTile("Режим Dock", "Скрывать в полноэкранных окнах", true, out _dockHideSub, delegate()
+            {
+                ShellController.Instance.DockAutoHide = !ShellController.Instance.DockAutoHide;
+                ShellController.Instance.SaveConfig();
+                RefreshState();
+            });
+            _dockHideTile.Margin = new Thickness(0, 10, 0, 0);
+            root.Children.Add(_dockHideTile);
+
+            Border dispCard = CreateGlassTile();
+            dispCard.Margin = new Thickness(0, 10, 0, 0);
+            dispCard.Padding = new Thickness(12, 10, 12, 10);
+            StackPanel dispStack = new StackPanel();
+            dispStack.Children.Add(new TextBlock
+            {
+                Text = "Яркость экрана",
+                FontSize = 12,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Brushes.White,
-                Margin = new Thickness(4, 0, 0, 10)
-            };
-            stack.Children.Add(title);
-
-            // 2x2 Quick toggles grid
-            var togglesGrid = new Grid();
-            togglesGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            togglesGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            togglesGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(56) });
-            togglesGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(56) });
-
-            var btnWifi = CreateToggleCard("📶", "Wi-Fi", "Сеть", () => Process.Start("ms-settings:network-wifi"));
-            Grid.SetRow(btnWifi, 0); Grid.SetColumn(btnWifi, 0);
-            togglesGrid.Children.Add(btnWifi);
-
-            var btnBt = CreateToggleCard("⚡", "Bluetooth", "Устройства", () => Process.Start("ms-settings:bluetooth"));
-            Grid.SetRow(btnBt, 0); Grid.SetColumn(btnBt, 1);
-            togglesGrid.Children.Add(btnBt);
-
-            _toggleDarkMode = CreateToggleCard("🌙", "Тёмная тема", "Вкл", () =>
-            {
-                var cfg = ShellController.Instance.Config;
-                cfg.IsDarkMode = !cfg.IsDarkMode;
-                ShellController.Instance.SaveConfig();
-                RefreshToggles();
+                Margin = new Thickness(0, 0, 0, 6)
             });
-            Grid.SetRow(_toggleDarkMode, 1); Grid.SetColumn(_toggleDarkMode, 0);
-            togglesGrid.Children.Add(_toggleDarkMode);
-
-            _toggleDockHide = CreateToggleCard("⚓", "Dock", "Автоскрытие", () =>
+            Slider brightSlider = new Slider
             {
-                var cfg = ShellController.Instance.Config;
-                cfg.DockAutoHide = !cfg.DockAutoHide;
-                ShellController.Instance.SaveConfig();
-                ShellController.Instance.ApplyTaskbarAndWorkArea();
-                RefreshToggles();
-            });
-            Grid.SetRow(_toggleDockHide, 1); Grid.SetColumn(_toggleDockHide, 1);
-            togglesGrid.Children.Add(_toggleDockHide);
-
-            stack.Children.Add(togglesGrid);
-
-            // Sound slider
-            var soundCard = CreateSliderCard("🔊 Звук", 75);
-            soundCard.Margin = new Thickness(0, 10, 0, 0);
-            stack.Children.Add(soundCard);
-
-            // Telemetry Info Card
-            var infoCard = new Border
-            {
-                Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
-                CornerRadius = new CornerRadius(10),
-                Padding = new Thickness(10),
-                Margin = new Thickness(0, 10, 0, 0)
-            };
-            var infoStack = new StackPanel();
-
-            _txtRam = new TextBlock
-            {
-                Text = "Память: RAM --%",
-                FontFamily = LiquidGlassTheme.UiFont,
-                FontSize = 12,
-                Foreground = Brushes.White
-            };
-            infoStack.Children.Add(_txtRam);
-
-            _txtUptime = new TextBlock
-            {
-                Text = "Время работы системы: --",
-                FontFamily = LiquidGlassTheme.UiFont,
-                FontSize = 11,
-                Foreground = new SolidColorBrush(Color.FromArgb(180, 255, 255, 255)),
-                Margin = new Thickness(0, 4, 0, 0)
-            };
-            infoStack.Children.Add(_txtUptime);
-            infoCard.Child = infoStack;
-            stack.Children.Add(infoCard);
-
-            // Settings button at bottom
-            var btnSettings = new Border
-            {
-                Background = new SolidColorBrush(Color.FromArgb(30, 255, 255, 255)),
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(0, 8, 0, 8),
-                Margin = new Thickness(0, 10, 0, 0),
+                Minimum = 25,
+                Maximum = 100,
+                Value = 100,
                 Cursor = Cursors.Hand
             };
-            var txtSettings = new TextBlock
+            brightSlider.ValueChanged += delegate(object s, RoutedPropertyChangedEventArgs<double> e)
             {
-                Text = "Настройки Tahoe Launcher",
-                FontFamily = LiquidGlassTheme.UiFont,
-                FontSize = 12,
-                FontWeight = FontWeights.Medium,
-                Foreground = Brushes.White,
-                HorizontalAlignment = HorizontalAlignment.Center
+                if (ShellController.Instance != null)
+                    ShellController.Instance.SetBrightnessOverlay(e.NewValue);
             };
-            btnSettings.Child = txtSettings;
-            btnSettings.MouseLeftButtonUp += (s, e) =>
-            {
-                HideControlCenter();
-                ShellController.Instance.OpenSettings();
-            };
-            stack.Children.Add(btnSettings);
+            dispStack.Children.Add(brightSlider);
+            dispCard.Child = dispStack;
+            root.Children.Add(dispCard);
 
-            glass.Child = stack;
-            Content = glass;
+            Border soundCard = CreateGlassTile();
+            soundCard.Margin = new Thickness(0, 10, 0, 0);
+            soundCard.Padding = new Thickness(12, 10, 12, 10);
+            StackPanel soundStack = new StackPanel();
+            soundStack.Children.Add(new TextBlock
+            {
+                Text = "Звук и мультимедиа",
+                FontSize = 12,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = Brushes.White,
+                Margin = new Thickness(0, 0, 0, 6)
+            });
+
+            StackPanel mediaBtns = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+            mediaBtns.Children.Add(CreateMediaChip("⏮", delegate() { NativeMethods.keybd_event(0xB1, 0, 0, UIntPtr.Zero); }));
+            mediaBtns.Children.Add(CreateMediaChip("⏯ Пауза/Пуск", delegate() { NativeMethods.keybd_event(0xB3, 0, 0, UIntPtr.Zero); }));
+            mediaBtns.Children.Add(CreateMediaChip("⏭", delegate() { NativeMethods.keybd_event(0xB0, 0, 0, UIntPtr.Zero); }));
+            mediaBtns.Children.Add(CreateMediaChip("🔊-", delegate() { NativeMethods.keybd_event(0xAE, 0, 0, UIntPtr.Zero); }));
+            mediaBtns.Children.Add(CreateMediaChip("🔊+", delegate() { NativeMethods.keybd_event(0xAF, 0, 0, UIntPtr.Zero); }));
+            soundStack.Children.Add(mediaBtns);
+            soundCard.Child = soundStack;
+            root.Children.Add(soundCard);
+
+            card.Child = root;
+            Content = card;
         }
 
-        private Border CreateToggleCard(string icon, string title, string subtitle, Action onClick)
+        private Border CreateGlassTile()
         {
-            var card = new Border
-            {
-                Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
-                CornerRadius = new CornerRadius(10),
-                Margin = new Thickness(4),
-                Padding = new Thickness(8),
-                Cursor = Cursors.Hand
-            };
+            Border b = new Border();
+            b.CornerRadius = new CornerRadius(16);
+            b.Background = new SolidColorBrush(Color.FromArgb(46, 255, 255, 255));
+            b.BorderBrush = new SolidColorBrush(Color.FromArgb(38, 255, 255, 255));
+            b.BorderThickness = new Thickness(1);
+            return b;
+        }
 
-            var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        private FrameworkElement CreateConnRow(string title, string sub, bool active, Action onClick)
+        {
+            Border row = new Border();
+            row.CornerRadius = new CornerRadius(10);
+            row.Padding = new Thickness(4, 5, 4, 5);
+            row.Background = Brushes.Transparent;
+            row.Cursor = Cursors.Hand;
 
-            var txtIcon = new TextBlock
+            StackPanel sp = new StackPanel { Orientation = Orientation.Horizontal };
+            Border dot = new Border
             {
-                Text = icon,
-                FontSize = 18,
-                VerticalAlignment = VerticalAlignment.Center,
+                Width = 26,
+                Height = 26,
+                CornerRadius = new CornerRadius(13),
+                Background = active ? LiquidGlassTheme.AccentBlueBrush : new SolidColorBrush(Color.FromArgb(60, 255, 255, 255)),
                 Margin = new Thickness(0, 0, 8, 0)
             };
-            Grid.SetColumn(txtIcon, 0);
-            grid.Children.Add(txtIcon);
-
-            var textStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-            var txtTitle = new TextBlock
+            TextBlock iconTxt = new TextBlock
             {
-                Text = title,
-                FontFamily = LiquidGlassTheme.UiFont,
-                FontSize = 11,
-                FontWeight = FontWeights.Medium,
-                Foreground = Brushes.White
-            };
-            textStack.Children.Add(txtTitle);
-
-            var txtSub = new TextBlock
-            {
-                Text = subtitle,
-                FontFamily = LiquidGlassTheme.UiFont,
-                FontSize = 10,
-                Foreground = new SolidColorBrush(Color.FromArgb(160, 255, 255, 255))
-            };
-            textStack.Children.Add(txtSub);
-            Grid.SetColumn(textStack, 1);
-            grid.Children.Add(textStack);
-
-            card.Child = grid;
-            card.MouseLeftButtonUp += (s, e) =>
-            {
-                if (onClick != null) onClick();
-            };
-
-            return card;
-        }
-
-        private Border CreateSliderCard(string label, double defaultValue)
-        {
-            var card = new Border
-            {
-                Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
-                CornerRadius = new CornerRadius(10),
-                Padding = new Thickness(10, 8, 10, 8)
-            };
-
-            var stack = new StackPanel();
-            var lbl = new TextBlock
-            {
-                Text = label,
-                FontFamily = LiquidGlassTheme.UiFont,
-                FontSize = 12,
+                Text = title.Substring(0, 1),
                 Foreground = Brushes.White,
-                Margin = new Thickness(0, 0, 0, 4)
+                FontWeight = FontWeights.Bold,
+                FontSize = 11,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
             };
-            stack.Children.Add(lbl);
+            dot.Child = iconTxt;
+            sp.Children.Add(dot);
 
-            var slider = new Slider
-            {
-                Minimum = 0,
-                Maximum = 100,
-                Value = defaultValue,
-                Foreground = LiquidGlassTheme.AccentBlueBrush
-            };
-            stack.Children.Add(slider);
+            StackPanel labels = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            labels.Children.Add(new TextBlock { Text = title, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White });
+            labels.Children.Add(new TextBlock { Text = sub, FontSize = 10.5, Foreground = new SolidColorBrush(Color.FromArgb(170, 235, 235, 245)) });
+            sp.Children.Add(labels);
 
-            card.Child = stack;
-            return card;
+            row.Child = sp;
+            row.MouseLeftButtonDown += delegate { if (onClick != null) onClick(); };
+            return row;
         }
 
-        private void RefreshToggles()
+        private Border CreateActionTile(string title, string sub, bool active, out TextBlock subBlock, Action onClick)
         {
-            // Update RAM & Uptime
-            try
-            {
-                var mem = new MEMORYSTATUSEX { dwLength = (uint)Marshal.SizeOf(typeof(MEMORYSTATUSEX)) };
-                if (Win32Api.GlobalMemoryStatusEx(ref mem))
-                {
-                    _txtRam.Text = string.Format("Память: {0}% занято ({1:F1} ГБ свободно)", mem.dwMemoryLoad, mem.ullAvailPhys / (1024.0 * 1024.0 * 1024.0));
-                }
+            Border tile = CreateGlassTile();
+            tile.Padding = new Thickness(12, 9, 12, 9);
+            tile.Cursor = Cursors.Hand;
 
-                TimeSpan uptime = TimeSpan.FromMilliseconds(Environment.TickCount);
-                _txtUptime.Text = string.Format("Время работы: {0} ч {1} мин", (int)uptime.TotalHours, uptime.Minutes);
-            }
-            catch { }
+            StackPanel sp = new StackPanel();
+            sp.Children.Add(new TextBlock { Text = title, FontSize = 12.5, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White });
+            subBlock = new TextBlock { Text = sub, FontSize = 11, Foreground = new SolidColorBrush(Color.FromArgb(185, 235, 235, 245)), Margin = new Thickness(0, 2, 0, 0) };
+            sp.Children.Add(subBlock);
+            tile.Child = sp;
+
+            tile.MouseLeftButtonDown += delegate { if (onClick != null) onClick(); };
+            return tile;
         }
 
-        public void ShowControlCenter()
+        private Border CreateMediaChip(string text, Action onClick)
         {
-            Visibility = Visibility.Visible;
-            IsHitTestVisible = true;
-            RefreshToggles();
-            Activate();
+            Border chip = new Border();
+            chip.CornerRadius = new CornerRadius(8);
+            chip.Background = new SolidColorBrush(Color.FromArgb(45, 255, 255, 255));
+            chip.Padding = new Thickness(9, 5, 9, 5);
+            chip.Margin = new Thickness(3, 0, 3, 0);
+            chip.Cursor = Cursors.Hand;
+            chip.Child = new TextBlock { Text = text, Foreground = Brushes.White, FontSize = 11.5, FontWeight = FontWeights.SemiBold };
+            chip.MouseLeftButtonDown += delegate { if (onClick != null) onClick(); };
+            return chip;
         }
 
-        public void HideControlCenter()
+        public void RefreshState()
         {
-            Visibility = Visibility.Collapsed;
-            IsHitTestVisible = false;
+            bool dark = ShellController.Instance.IsDarkMode;
+            _darkModeSub.Text = dark ? "Тёмная тема" : "Светлая тема";
+            _darkModeTile.Background = dark
+                ? new SolidColorBrush(Color.FromArgb(115, 10, 132, 255))
+                : new SolidColorBrush(Color.FromArgb(46, 255, 255, 255));
+
+            bool iconsVis = NativeMethods.AreDesktopIconsVisible();
+            _iconsSub.Text = iconsVis ? "Показаны" : "Скрыты";
+            _iconsTile.Background = iconsVis
+                ? new SolidColorBrush(Color.FromArgb(115, 10, 132, 255))
+                : new SolidColorBrush(Color.FromArgb(46, 255, 255, 255));
+
+            bool widgetsVis = ShellController.Instance.Config.ShowDesktopWidgets;
+            _widgetsSub.Text = widgetsVis ? "Показаны на рабочем столе" : "Скрыты";
+            _widgetsTile.Background = widgetsVis
+                ? new SolidColorBrush(Color.FromArgb(115, 10, 132, 255))
+                : new SolidColorBrush(Color.FromArgb(46, 255, 255, 255));
+
+            bool autoHide = ShellController.Instance.DockAutoHide;
+            _dockHideSub.Text = autoHide ? "Скрывать в полноэкранных окнах" : "Всегда показывать поверх окон";
+            _dockHideTile.Background = autoHide
+                ? new SolidColorBrush(Color.FromArgb(115, 10, 132, 255))
+                : new SolidColorBrush(Color.FromArgb(46, 255, 255, 255));
         }
     }
+
+    // =========================================================================
+    // 5. OMNI-LAUNCHER & COMMAND PALETTE (Alt+Space / Быстрый поиск)
+    // =========================================================================
 }
