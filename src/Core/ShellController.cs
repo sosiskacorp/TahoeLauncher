@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -53,6 +53,7 @@ namespace MacOSTahoe
         public AppSwitcherWindow AppSwitcher;
         public SplitViewDividerWindow SplitViewDivider;
         public SplitViewPickerWindow SplitViewPicker;
+        public BackgroundTasksWindow BackgroundTasks;
         public List<StageGroup> CurrentStageGroups = new List<StageGroup>();
         public StageGroup ActiveStageGroup = null;
         public List<List<IntPtr>> MergedStageWindows = new List<List<IntPtr>>();
@@ -1302,6 +1303,7 @@ namespace MacOSTahoe
             if (WindowSwitcher != null && WindowSwitcher.IsVisible) WindowSwitcher.Hide();
             if (AppSwitcher != null && AppSwitcher.IsVisible) AppSwitcher.Hide();
             if (SplitViewPicker != null && SplitViewPicker.IsVisible) SplitViewPicker.Hide();
+            if (BackgroundTasks != null && BackgroundTasks.IsVisible) BackgroundTasks.Hide();
         }
 
         public void ToggleSpotlight()
@@ -1733,6 +1735,7 @@ namespace MacOSTahoe
         public void EnterSplitView(IntPtr leftHwnd, IntPtr rightHwnd, double ratio)
         {
             if (SplitViewPicker != null && SplitViewPicker.IsVisible) SplitViewPicker.Hide();
+            if (BackgroundTasks != null && BackgroundTasks.IsVisible) BackgroundTasks.Hide();
             if (SplitViewDivider == null) SplitViewDivider = new SplitViewDividerWindow();
             SplitViewDivider.LeftHwnd = leftHwnd;
             SplitViewDivider.RightHwnd = rightHwnd;
@@ -1744,6 +1747,7 @@ namespace MacOSTahoe
         public void ExitSplitView()
         {
             if (SplitViewPicker != null && SplitViewPicker.IsVisible) SplitViewPicker.Hide();
+            if (BackgroundTasks != null && BackgroundTasks.IsVisible) BackgroundTasks.Hide();
             if (SplitViewDivider != null && SplitViewDivider.IsVisible)
             {
                 SplitViewDivider.RestoreIsolatedWindows();
@@ -1938,6 +1942,24 @@ namespace MacOSTahoe
             SettingsHub.RefreshAllTabs();
             SettingsHub.Show();
             SettingsHub.Activate();
+        }
+
+        public void ToggleBackgroundTasks()
+        {
+            if (BackgroundTasks == null) BackgroundTasks = new BackgroundTasksWindow();
+            if (BackgroundTasks.IsVisible)
+            {
+                BackgroundTasks.Hide();
+            }
+            else
+            {
+                CloseAllPopups();
+                BackgroundTasks.RefreshTasks();
+                BackgroundTasks.Left = Math.Max(10, SystemParameters.PrimaryScreenWidth - BackgroundTasks.Width - 12);
+                BackgroundTasks.Top = Config.ShowTopBar ? 34 : 12;
+                BackgroundTasks.Show();
+                BackgroundTasks.Activate();
+            }
         }
 
         public void ToggleControlCenter()

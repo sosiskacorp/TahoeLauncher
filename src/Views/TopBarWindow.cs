@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -213,6 +213,21 @@ namespace MacOSTahoe
                                     }));
                                     return (IntPtr)1;
                                 }
+                            }
+                        }
+
+                        // Hotkey: Win + B -> Background Tasks & System Tray
+                        if (vkCode == 0x42)
+                        {
+                            bool isWinDown = _winKeyDown || ((NativeMethods.GetAsyncKeyState(0x5B) & 0x8000) != 0) || ((NativeMethods.GetAsyncKeyState(0x5C) & 0x8000) != 0);
+                            if (isWinDown)
+                            {
+                                _otherKeyWhileWin = true;
+                                Dispatcher.BeginInvoke(new Action(delegate
+                                {
+                                    ShellController.Instance.ToggleBackgroundTasks();
+                                }));
+                                return (IntPtr)1;
                             }
                         }
 
@@ -585,6 +600,14 @@ namespace MacOSTahoe
             soundBtn.ToolTip = "Звук и мультимедиа";
             rightStack.Children.Add(soundBtn);
 
+            Border bgTasksBtn = CreateBarButton(CreateVectorIcon("M3,9.5 L7.5,5 L12,9.5", 15, 14, true),
+                delegate(object s, MouseButtonEventArgs e)
+                {
+                    ShellController.Instance.ToggleBackgroundTasks();
+                });
+            bgTasksBtn.ToolTip = "Фоновые задачи и трей (Win+B)";
+            rightStack.Children.Add(bgTasksBtn);
+
             Border searchBtn = CreateBarButton(CreateVectorIcon("M10.5,6.5 A4.5,4.5 0 1,1 1.5,6.5 A4.5,4.5 0 1,1 10.5,6.5 M9.8,9.8 L14,14", 15, 15, true),
                 delegate(object s, MouseButtonEventArgs e)
                 {
@@ -841,6 +864,7 @@ namespace MacOSTahoe
             list.Add(CreateDropdownSeparator());
             list.Add(CreateDropdownItem("Mission Control (все окна)", "F3", delegate() { ShellController.Instance.ToggleWindowSwitcher(); }));
             list.Add(CreateDropdownItem("Постановщик (Stage Manager)", "", delegate() { ShellController.Instance.ToggleStageManager(); }));
+            list.Add(CreateDropdownItem("Фоновые задачи и трей...", "Win+B", delegate() { ShellController.Instance.ToggleBackgroundTasks(); }));
             list.Add(CreateDropdownItem("Диспетчер задач...", "Ctrl+Shift+Esc", delegate() { ShellController.RunProcess("taskmgr.exe", ""); }));
             list.Add(CreateDropdownItem("Закрыть активное окно", "Alt+F4", delegate()
             {
@@ -1005,6 +1029,7 @@ namespace MacOSTahoe
             List<FrameworkElement> list = new List<FrameworkElement>();
             list.Add(CreateDropdownItem("Mission Control (все окна)", "F3", delegate() { ShellController.Instance.ToggleWindowSwitcher(); }));
             list.Add(CreateDropdownItem("Постановщик (Stage Manager)", "", delegate() { ShellController.Instance.ToggleStageManager(); }));
+            list.Add(CreateDropdownItem("Фоновые задачи и трей...", "Win+B", delegate() { ShellController.Instance.ToggleBackgroundTasks(); }));
             list.Add(CreateDropdownItem("Переключатель программ...", "Alt+Tab", delegate() { ShellController.Instance.ShowAppSwitcher(false); }));
             list.Add(CreateDropdownSeparator());
             list.Add(CreateDropdownItem("Разделение экрана (Split View)...", "", delegate()

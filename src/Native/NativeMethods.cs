@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -434,6 +434,57 @@ namespace MacOSTahoe
                 if (secTray != IntPtr.Zero)
                 {
                     ShowWindow(secTray, SW_SHOWNORMAL);
+                }
+            }
+            catch { }
+        }
+
+        public static bool IsNativeTaskbarVisible()
+        {
+            try
+            {
+                IntPtr tray = FindWindow("Shell_TrayWnd", null);
+                return tray != IntPtr.Zero && IsWindowVisible(tray);
+            }
+            catch { return false; }
+        }
+
+        public static void ToggleNativeTaskbar()
+        {
+            try
+            {
+                IntPtr tray = FindWindow("Shell_TrayWnd", null);
+                if (tray != IntPtr.Zero)
+                {
+                    if (IsWindowVisible(tray))
+                    {
+                        ShowWindow(tray, SW_HIDE);
+                    }
+                    else
+                    {
+                        ShowWindow(tray, SW_SHOWNORMAL);
+                    }
+                }
+            }
+            catch { }
+        }
+
+        public static void OpenNativeTrayOverflow()
+        {
+            try
+            {
+                IntPtr tray = FindWindow("Shell_TrayWnd", null);
+                if (tray != IntPtr.Zero)
+                {
+                    ShowWindow(tray, SW_SHOWNORMAL);
+                    Thread.Sleep(60);
+                    keybd_event(0x5B, 0, 0, UIntPtr.Zero);
+                    keybd_event(0x42, 0, 0, UIntPtr.Zero);
+                    keybd_event(0x42, 0, 2, UIntPtr.Zero);
+                    keybd_event(0x5B, 0, 2, UIntPtr.Zero);
+                    Thread.Sleep(120);
+                    keybd_event(0x0D, 0, 0, UIntPtr.Zero);
+                    keybd_event(0x0D, 0, 2, UIntPtr.Zero);
                 }
             }
             catch { }

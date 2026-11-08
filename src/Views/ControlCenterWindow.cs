@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -50,7 +50,7 @@ namespace MacOSTahoe
             Topmost = true;
             ShowInTaskbar = false;
             Width = 350;
-            Height = 555;
+            Height = 615;
             Background = Brushes.Transparent;
             FontFamily = LiquidGlassTheme.UiFont;
 
@@ -142,6 +142,15 @@ namespace MacOSTahoe
             });
             _stageManagerTile.Margin = new Thickness(0, 10, 0, 0);
             root.Children.Add(_stageManagerTile);
+
+            TextBlock bgSub;
+            Border bgTasksTile = CreateActionTile("Р¤РѕРЅРѕРІС‹Рµ Р·Р°РґР°С‡Рё", "РўСЂРµР№ Рё РїСЂРѕС†РµСЃСЃС‹ (Win+B)", true, out bgSub, delegate()
+            {
+                Hide();
+                ShellController.Instance.ToggleBackgroundTasks();
+            });
+            bgTasksTile.Margin = new Thickness(0, 10, 0, 0);
+            root.Children.Add(bgTasksTile);
 
             Border dispCard = CreateGlassTile();
             dispCard.Margin = new Thickness(0, 10, 0, 0);
