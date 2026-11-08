@@ -294,6 +294,7 @@ namespace MacOSTahoe
         public const int SW_HIDE = 0;
         public const int SW_SHOWNORMAL = 1;
         public const int SW_SHOW = 5;
+        public const int SW_SHOWNOACTIVATE = 4;
         public const int SW_SHOWMINIMIZED = 2;
         public const int SW_MAXIMIZE = 3;
         public const int SW_RESTORE = 9;

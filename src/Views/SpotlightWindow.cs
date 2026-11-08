@@ -47,6 +47,9 @@ namespace MacOSTahoe
         private List<SpotlightResultItem> _currentItems = new List<SpotlightResultItem>();
         private List<Border> _resultRows = new List<Border>();
         private int _selectedIndex = 0;
+        private ScaleTransform _scaleTransform;
+        private Border _card;
+        private bool _isClosing = false;
 
         public SpotlightWindow()
         {
@@ -65,7 +68,10 @@ namespace MacOSTahoe
 
             BuildUI();
 
-            Deactivated += delegate { Hide(); };
+            Deactivated += delegate
+            {
+                if (!_isClosing && IsVisible) HideAnimated();
+            };
             PreviewKeyDown += OnWindowPreviewKeyDown;
         }
 
@@ -156,13 +162,18 @@ namespace MacOSTahoe
             root.Children.Add(_resultsPanel);
 
             card.Child = root;
+            _card = card;
+            _scaleTransform = new ScaleTransform(1.0, 1.0);
+            _card.RenderTransform = _scaleTransform;
+            _card.RenderTransformOrigin = new Point(0.5, 0.5);
             Content = card;
 
             PopulateResults("");
         }
 
-        public void ShowAndFocus()
+        public void ShowAnimated()
         {
+            _isClosing = false;
             Left = (SystemParameters.PrimaryScreenWidth - Width) / 2.0;
             Top = SystemParameters.PrimaryScreenHeight * 0.20;
             _searchBox.Text = "";
@@ -171,6 +182,25 @@ namespace MacOSTahoe
             Show();
             Activate();
             _searchBox.Focus();
+
+            AnimationHelper.ScaleAndFadeIn(_card, _scaleTransform, 0.94, 180);
+        }
+
+        public void ShowAndFocus()
+        {
+            ShowAnimated();
+        }
+
+        public void HideAnimated(Action onCompleted = null)
+        {
+            if (_isClosing || !IsVisible) return;
+            _isClosing = true;
+            AnimationHelper.ScaleAndFadeOut(_card, _scaleTransform, 0.95, 130, delegate
+            {
+                Hide();
+                _isClosing = false;
+                if (onCompleted != null) onCompleted();
+            });
         }
 
         private void OnSearchTextChanged(object sender, TextChangedEventArgs e)
@@ -184,7 +214,7 @@ namespace MacOSTahoe
             if (e.Key == Key.Escape)
             {
                 e.Handled = true;
-                Hide();
+                HideAnimated();
             }
             else if (e.Key == Key.Down)
             {
@@ -212,8 +242,7 @@ namespace MacOSTahoe
                     if (!string.IsNullOrEmpty(loc))
                     {
                         e.Handled = true;
-                        Hide();
-                        ShellController.OpenFileLocation(loc);
+                        HideAnimated(delegate { ShellController.OpenFileLocation(loc); });
                     }
                 }
             }
@@ -224,11 +253,8 @@ namespace MacOSTahoe
                 {
                     SpotlightResultItem sel = _currentItems[_selectedIndex];
                     bool ctrlShift = (Keyboard.Modifiers & ModifierKeys.Control) != 0 && (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
-                    Hide();
-                    if (ctrlShift && sel.OnAdminExecute != null)
-                        sel.OnAdminExecute();
-                    else if (sel.OnExecute != null)
-                        sel.OnExecute();
+                    Action runAct = (ctrlShift && sel.OnAdminExecute != null) ? sel.OnAdminExecute : sel.OnExecute;
+                    HideAnimated(delegate { if (runAct != null) runAct(); });
                 }
             }
         }
@@ -478,8 +504,10 @@ namespace MacOSTahoe
             };
             row.MouseLeftButtonDown += delegate
             {
-                Hide();
-                if (capturedItem.OnExecute != null) capturedItem.OnExecute();
+                HideAnimated(delegate
+                {
+                    if (capturedItem.OnExecute != null) capturedItem.OnExecute();
+                });
             };
 
             _resultRows.Add(row);

@@ -32,6 +32,9 @@ namespace MacOSTahoe
     {
         private TextBlock _bigTime;
         private TextBlock _bigDate;
+        private TranslateTransform _translateTransform;
+        private Border _card;
+        private bool _isClosing = false;
 
         public CalendarWidgetWindow()
         {
@@ -47,7 +50,10 @@ namespace MacOSTahoe
             FontFamily = LiquidGlassTheme.UiFont;
 
             BuildUI();
-            Deactivated += delegate { Hide(); };
+            Deactivated += delegate
+            {
+                if (!_isClosing && IsVisible) HideAnimated();
+            };
         }
 
         private void BuildUI()
@@ -148,7 +154,35 @@ namespace MacOSTahoe
             root.Children.Add(calCard);
 
             card.Child = root;
+            _card = card;
+            _translateTransform = new TranslateTransform(0, 0);
+            _card.RenderTransform = _translateTransform;
             Content = card;
+        }
+
+
+        public void ShowAnimated()
+        {
+            _isClosing = false;
+            RefreshState();
+            Left = SystemParameters.PrimaryScreenWidth - Width - 12;
+            Top = (ShellController.Instance != null && ShellController.Instance.Config.ShowTopBar) ? 34 : 12;
+            Show();
+            Activate();
+
+            AnimationHelper.SlideDownAndFadeIn(_card, _translateTransform, -16.0, 180);
+        }
+
+        public void HideAnimated(Action onCompleted = null)
+        {
+            if (_isClosing || !IsVisible) return;
+            _isClosing = true;
+            AnimationHelper.SlideUpAndFadeOut(_card, _translateTransform, -14.0, 130, delegate
+            {
+                Hide();
+                _isClosing = false;
+                if (onCompleted != null) onCompleted();
+            });
         }
 
         public void RefreshState()

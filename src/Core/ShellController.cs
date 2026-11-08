@@ -58,6 +58,8 @@ namespace MacOSTahoe
         public StageGroup ActiveStageGroup = null;
         public List<List<IntPtr>> MergedStageWindows = new List<List<IntPtr>>();
         public bool IsStageDesktopRevealed = false;
+        public readonly Dictionary<IntPtr, int> WindowSpaceMap = new Dictionary<IntPtr, int>();
+        private readonly HashSet<IntPtr> _hiddenBySpaceManager = new HashSet<IntPtr>();
 
         public ImageSource DefaultAppIcon
         {
@@ -1296,28 +1298,27 @@ namespace MacOSTahoe
 
         public void CloseAllPopups()
         {
-            if (ControlCenter != null && ControlCenter.IsVisible) ControlCenter.Hide();
-            if (CalendarPopup != null && CalendarPopup.IsVisible) CalendarPopup.Hide();
-            if (Spotlight != null && Spotlight.IsVisible) Spotlight.Hide();
-            if (Launchpad != null && Launchpad.IsVisible) Launchpad.Hide();
-            if (WindowSwitcher != null && WindowSwitcher.IsVisible) WindowSwitcher.Hide();
-            if (AppSwitcher != null && AppSwitcher.IsVisible) AppSwitcher.Hide();
+            if (ControlCenter != null && ControlCenter.IsVisible) ControlCenter.HideAnimated();
+            if (CalendarPopup != null && CalendarPopup.IsVisible) CalendarPopup.HideAnimated();
+            if (Spotlight != null && Spotlight.IsVisible) Spotlight.HideAnimated();
+            if (Launchpad != null && Launchpad.IsVisible) Launchpad.HideWithAnimation();
+            if (WindowSwitcher != null && WindowSwitcher.IsVisible) WindowSwitcher.HideAnimated();
+            if (AppSwitcher != null && AppSwitcher.IsVisible) AppSwitcher.HideAnimated();
             if (SplitViewPicker != null && SplitViewPicker.IsVisible) SplitViewPicker.Hide();
-            if (BackgroundTasks != null && BackgroundTasks.IsVisible) BackgroundTasks.Hide();
+            if (BackgroundTasks != null && BackgroundTasks.IsVisible) BackgroundTasks.HideAnimated();
         }
 
         public void ToggleSpotlight()
         {
             if (Spotlight == null) Spotlight = new SpotlightWindow();
-            if (Spotlight == null) Spotlight = new SpotlightWindow();
             if (Spotlight.IsVisible)
             {
-                Spotlight.Hide();
+                Spotlight.HideAnimated();
             }
             else
             {
                 CloseAllPopups();
-                Spotlight.ShowAndFocus();
+                Spotlight.ShowAnimated();
             }
         }
 
@@ -1339,15 +1340,14 @@ namespace MacOSTahoe
         public void ToggleWindowSwitcher()
         {
             if (WindowSwitcher == null) WindowSwitcher = new WindowSwitcherWindow();
-            if (WindowSwitcher == null) WindowSwitcher = new WindowSwitcherWindow();
             if (WindowSwitcher.IsVisible)
             {
-                WindowSwitcher.Hide();
+                WindowSwitcher.HideAnimated();
             }
             else
             {
                 CloseAllPopups();
-                WindowSwitcher.ShowAndRefresh();
+                WindowSwitcher.ShowAnimated();
             }
         }
 
@@ -1790,47 +1790,69 @@ namespace MacOSTahoe
             if (Config.Spaces == null) Config.Spaces = new List<string>();
             int newIndex = Config.Spaces.Count + 1;
             Config.Spaces.Add("Рабочий стол " + newIndex.ToString());
-            Config.CurrentSpaceIndex = Config.Spaces.Count - 1;
             SaveConfig();
-
-            NativeMethods.keybd_event(0x5B, 0, 0, UIntPtr.Zero);
-            NativeMethods.keybd_event(0x11, 0, 0, UIntPtr.Zero);
-            NativeMethods.keybd_event(0x44, 0, 0, UIntPtr.Zero);
-            NativeMethods.keybd_event(0x44, 0, 2, UIntPtr.Zero);
-            NativeMethods.keybd_event(0x11, 0, 2, UIntPtr.Zero);
-            NativeMethods.keybd_event(0x5B, 0, 2, UIntPtr.Zero);
+            SwitchToSpace(Config.Spaces.Count - 1);
         }
 
         public void SwitchToSpace(int index)
         {
             if (Config.Spaces == null || index < 0 || index >= Config.Spaces.Count) return;
-            int current = Config.CurrentSpaceIndex;
-            if (current == index) return;
+            int previousSpace = Config.CurrentSpaceIndex;
+            if (previousSpace == index) return;
 
-            int diff = index - current;
+            // 1. Map any currently untracked open windows to previousSpace
+            List<OpenWindowEntry> openWins = GetOpenApplicationWindows();
+            for (int i = 0; i < openWins.Count; i++)
+            {
+                IntPtr h = openWins[i].Hwnd;
+                if (!WindowSpaceMap.ContainsKey(h))
+                {
+                    int assigned = GetAppSpaceAssignment(openWins[i].ProcessName);
+                    WindowSpaceMap[h] = (assigned >= 0 && assigned < Config.Spaces.Count) ? assigned : previousSpace;
+                }
+            }
+
+            // 2. Perform true space window isolation: reveal target space windows, hide other space windows
+            List<IntPtr> tracked = new List<IntPtr>(WindowSpaceMap.Keys);
+            for (int i = 0; i < tracked.Count; i++)
+            {
+                IntPtr h = tracked[i];
+                if (!NativeMethods.IsWindow(h))
+                {
+                    WindowSpaceMap.Remove(h);
+                    _hiddenBySpaceManager.Remove(h);
+                    continue;
+                }
+
+                int space = WindowSpaceMap[h];
+                if (space == index)
+                {
+                    if (_hiddenBySpaceManager.Contains(h))
+                    {
+                        NativeMethods.ShowWindow(h, NativeMethods.SW_SHOWNOACTIVATE);
+                        _hiddenBySpaceManager.Remove(h);
+                    }
+                }
+                else
+                {
+                    if (NativeMethods.IsWindowVisible(h))
+                    {
+                        _hiddenBySpaceManager.Add(h);
+                        NativeMethods.ShowWindow(h, NativeMethods.SW_HIDE);
+                    }
+                }
+            }
+
             Config.CurrentSpaceIndex = index;
             SaveConfig();
-
-            byte key = diff > 0 ? (byte)0x27 : (byte)0x25;
-            int count = Math.Abs(diff);
-            for (int i = 0; i < count; i++)
-            {
-                NativeMethods.keybd_event(0x5B, 0, 0, UIntPtr.Zero);
-                NativeMethods.keybd_event(0x11, 0, 0, UIntPtr.Zero);
-                NativeMethods.keybd_event(key, 0, 0, UIntPtr.Zero);
-                NativeMethods.keybd_event(key, 0, 2, UIntPtr.Zero);
-                NativeMethods.keybd_event(0x11, 0, 2, UIntPtr.Zero);
-                NativeMethods.keybd_event(0x5B, 0, 2, UIntPtr.Zero);
-                Thread.Sleep(50);
-            }
 
             if (Config.SpaceWallpapers != null && index < Config.SpaceWallpapers.Count)
             {
                 string wp = Config.SpaceWallpapers[index];
                 if (!string.IsNullOrEmpty(wp) && File.Exists(wp)) ApplyWallpaperFile(wp);
             }
-
         }
+
         public void SetSpaceWallpaper(int spaceIndex, string wpPath)
         {
             if (Config.SpaceWallpapers == null) Config.SpaceWallpapers = new List<string>();
@@ -1843,8 +1865,18 @@ namespace MacOSTahoe
         public void MoveWindowToSpace(IntPtr hwnd, int targetSpaceIndex)
         {
             if (hwnd == IntPtr.Zero || !NativeMethods.IsWindow(hwnd)) return;
+            WindowSpaceMap[hwnd] = targetSpaceIndex;
             if (targetSpaceIndex != Config.CurrentSpaceIndex)
-                NativeMethods.ShowWindow(hwnd, NativeMethods.SW_SHOWMINIMIZED);
+            {
+                _hiddenBySpaceManager.Add(hwnd);
+                NativeMethods.ShowWindow(hwnd, NativeMethods.SW_HIDE);
+            }
+            else
+            {
+                _hiddenBySpaceManager.Remove(hwnd);
+                NativeMethods.ShowWindow(hwnd, NativeMethods.SW_SHOW);
+                NativeMethods.SetForegroundWindow(hwnd);
+            }
         }
 
         public void AssignAppToSpace(string appName, int spaceIndex)
@@ -1914,22 +1946,31 @@ namespace MacOSTahoe
         {
             if (Config.Spaces == null || Config.Spaces.Count <= 1 || index < 0 || index >= Config.Spaces.Count) return;
 
-            if (Config.CurrentSpaceIndex != index)
+            int fallbackSpace = Math.Max(0, index - 1);
+            List<IntPtr> keys = new List<IntPtr>(WindowSpaceMap.Keys);
+            for (int i = 0; i < keys.Count; i++)
             {
-                SwitchToSpace(index);
+                IntPtr h = keys[i];
+                if (WindowSpaceMap[h] == index)
+                {
+                    WindowSpaceMap[h] = fallbackSpace;
+                }
+                else if (WindowSpaceMap[h] > index)
+                {
+                    WindowSpaceMap[h]--;
+                }
             }
 
-            NativeMethods.keybd_event(0x5B, 0, 0, UIntPtr.Zero);
-            NativeMethods.keybd_event(0x11, 0, 0, UIntPtr.Zero);
-            NativeMethods.keybd_event(0x73, 0, 0, UIntPtr.Zero);
-            NativeMethods.keybd_event(0x73, 0, 2, UIntPtr.Zero);
-            NativeMethods.keybd_event(0x11, 0, 2, UIntPtr.Zero);
-            NativeMethods.keybd_event(0x5B, 0, 2, UIntPtr.Zero);
-
             Config.Spaces.RemoveAt(index);
+            if (Config.SpaceWallpapers != null && index < Config.SpaceWallpapers.Count)
+            {
+                Config.SpaceWallpapers.RemoveAt(index);
+            }
             if (Config.CurrentSpaceIndex >= Config.Spaces.Count)
                 Config.CurrentSpaceIndex = Config.Spaces.Count - 1;
             SaveConfig();
+
+            SwitchToSpace(Config.CurrentSpaceIndex);
         }
 
         public void ShowLauncherSettings()
@@ -1949,37 +1990,26 @@ namespace MacOSTahoe
             if (BackgroundTasks == null) BackgroundTasks = new BackgroundTasksWindow();
             if (BackgroundTasks.IsVisible)
             {
-                BackgroundTasks.Hide();
+                BackgroundTasks.HideAnimated();
             }
             else
             {
                 CloseAllPopups();
-                BackgroundTasks.RefreshTasks();
-                BackgroundTasks.Left = Math.Max(10, SystemParameters.PrimaryScreenWidth - BackgroundTasks.Width - 12);
-                BackgroundTasks.Top = Config.ShowTopBar ? 34 : 12;
-                BackgroundTasks.Show();
-                BackgroundTasks.Activate();
+                BackgroundTasks.ShowAnimated();
             }
         }
 
         public void ToggleControlCenter()
         {
             if (ControlCenter == null) ControlCenter = new ControlCenterWindow();
-            if (ControlCenter == null) ControlCenter = new ControlCenterWindow();
             if (ControlCenter.IsVisible)
             {
-                ControlCenter.Hide();
+                ControlCenter.HideAnimated();
             }
             else
             {
-                if (CalendarPopup != null && CalendarPopup.IsVisible) CalendarPopup.Hide();
-                if (Spotlight != null && Spotlight.IsVisible) Spotlight.Hide();
-                if (WindowSwitcher != null && WindowSwitcher.IsVisible) WindowSwitcher.Hide();
-                ControlCenter.RefreshState();
-                ControlCenter.Left = SystemParameters.PrimaryScreenWidth - ControlCenter.Width - 12;
-                ControlCenter.Top = Config.ShowTopBar ? 34 : 12;
-                ControlCenter.Show();
-                ControlCenter.Activate();
+                CloseAllPopups();
+                ControlCenter.ShowAnimated();
             }
         }
 
@@ -1988,18 +2018,12 @@ namespace MacOSTahoe
             if (CalendarPopup == null) CalendarPopup = new CalendarWidgetWindow();
             if (CalendarPopup.IsVisible)
             {
-                CalendarPopup.Hide();
+                CalendarPopup.HideAnimated();
             }
             else
             {
-                if (ControlCenter != null && ControlCenter.IsVisible) ControlCenter.Hide();
-                if (Spotlight != null && Spotlight.IsVisible) Spotlight.Hide();
-                if (WindowSwitcher != null && WindowSwitcher.IsVisible) WindowSwitcher.Hide();
-                CalendarPopup.RefreshState();
-                CalendarPopup.Left = SystemParameters.PrimaryScreenWidth - CalendarPopup.Width - 12;
-                CalendarPopup.Top = Config.ShowTopBar ? 34 : 12;
-                CalendarPopup.Show();
-                CalendarPopup.Activate();
+                CloseAllPopups();
+                CalendarPopup.ShowAnimated();
             }
         }
 

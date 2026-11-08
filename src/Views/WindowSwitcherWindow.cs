@@ -31,6 +31,9 @@ namespace MacOSTahoe
         private Point _dragStartPoint;
         private bool _isDragging = false;
         private Popup _spaceMenuPopup;
+        private StackPanel _container;
+        private ScaleTransform _containerScale;
+        private bool _isClosing = false;
 
         public WindowSwitcherWindow()
         {
@@ -51,17 +54,14 @@ namespace MacOSTahoe
 
             Visibility = Visibility.Collapsed;
 
-            SourceInitialized += delegate
-            {
-                NativeMethods.EnableBlur(this, 0xCC0E0E16);
-            };
+            Background = new SolidColorBrush(Color.FromArgb(170, 10, 14, 24));
 
             PreviewKeyDown += delegate(object s, KeyEventArgs e)
             {
                 if (e.Key == Key.Escape || e.Key == Key.F3)
                 {
                     e.Handled = true;
-                    Hide();
+                    HideAnimated();
                 }
                 else if (e.Key == Key.Left)
                 {
@@ -71,6 +71,7 @@ namespace MacOSTahoe
                         _currentSpaceIndex--;
                         ShellController.Instance.SwitchToSpace(_currentSpaceIndex);
                         RefreshSpacesBar();
+                        PopulateWindows();
                     }
                 }
                 else if (e.Key == Key.Right)
@@ -81,6 +82,7 @@ namespace MacOSTahoe
                         _currentSpaceIndex++;
                         ShellController.Instance.SwitchToSpace(_currentSpaceIndex);
                         RefreshSpacesBar();
+                        PopulateWindows();
                     }
                 }
             };
@@ -91,7 +93,7 @@ namespace MacOSTahoe
             Grid root = new Grid { Background = Brushes.Transparent };
             root.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
             {
-                if (e.OriginalSource == root) Hide();
+                if (e.OriginalSource == root) HideAnimated();
             };
 
             StackPanel container = new StackPanel
@@ -101,6 +103,10 @@ namespace MacOSTahoe
                 Margin = new Thickness(0, 32, 0, 0),
                 Width = Math.Min(1380, Width - 50)
             };
+            _container = container;
+            _containerScale = new ScaleTransform(1.0, 1.0);
+            container.RenderTransform = _containerScale;
+            container.RenderTransformOrigin = new Point(0.5, 0.4);
 
             // 1. TOP SPACES BAR
             Border spacesContainer = new Border
@@ -186,8 +192,12 @@ namespace MacOSTahoe
                 List<OpenWindowEntry> wins = ShellController.Instance.GetOpenApplicationWindows();
                 if (wins.Count >= 2)
                 {
-                    Hide();
-                    ShellController.Instance.EnterSplitView(wins[0].Hwnd, wins[1].Hwnd, 0.5);
+                    IntPtr left = wins[0].Hwnd;
+                    IntPtr right = wins[1].Hwnd;
+                    HideAnimated(delegate
+                    {
+                        ShellController.Instance.EnterSplitView(left, right, 0.5);
+                    });
                 }
                 else
                 {
@@ -204,12 +214,12 @@ namespace MacOSTahoe
                 {
                     NativeMethods.ShowWindow(list[i].Hwnd, NativeMethods.SW_SHOWMINIMIZED);
                 }
-                Hide();
+                HideAnimated();
             });
             minAllBtn.Margin = new Thickness(8, 0, 0, 0);
             actions.Children.Add(minAllBtn);
 
-            Border closeBtn = CreateActionPill("✕ Закрыть (F3 / Esc)", delegate { Hide(); });
+            Border closeBtn = CreateActionPill("✕ Закрыть (F3 / Esc)", delegate { HideAnimated(); });
             closeBtn.Margin = new Thickness(8, 0, 0, 0);
             actions.Children.Add(closeBtn);
 
@@ -271,8 +281,9 @@ namespace MacOSTahoe
             return b;
         }
 
-        public void ShowAndRefresh()
+        public void ShowAnimated()
         {
+            _isClosing = false;
             if (ShellController.Instance != null)
             {
                 _currentSpaceIndex = ShellController.Instance.Config.CurrentSpaceIndex;
@@ -283,6 +294,27 @@ namespace MacOSTahoe
             PopulateWindows();
             Show();
             Activate();
+
+            AnimationHelper.FadeIn(this, 180);
+            AnimationHelper.ScaleAndFadeIn(_container, _containerScale, 0.95, 200);
+        }
+
+        public void ShowAndRefresh()
+        {
+            ShowAnimated();
+        }
+
+        public void HideAnimated(Action onCompleted = null)
+        {
+            if (_isClosing || !IsVisible) return;
+            _isClosing = true;
+            AnimationHelper.FadeOut(this, 140);
+            AnimationHelper.ScaleAndFadeOut(_container, _containerScale, 0.96, 140, delegate
+            {
+                Hide();
+                _isClosing = false;
+                if (onCompleted != null) onCompleted();
+            });
         }
 
         private void RefreshSpacesBar()
@@ -360,6 +392,18 @@ namespace MacOSTahoe
                     cardGrid.Children.Add(closeSpaceBtn);
                 }
 
+                int spaceWinCount = 0;
+                if (ShellController.Instance != null && ShellController.Instance.WindowSpaceMap != null)
+                {
+                    foreach (KeyValuePair<IntPtr, int> kvp in ShellController.Instance.WindowSpaceMap)
+                    {
+                        if (kvp.Value == index && NativeMethods.IsWindow(kvp.Key))
+                            spaceWinCount++;
+                    }
+                }
+                string countText = (spaceWinCount == 0) ? "Пусто" : (spaceWinCount == 1 ? "1 окно" : (spaceWinCount < 5 ? spaceWinCount + " окна" : spaceWinCount + " окон"));
+
+                StackPanel titleStack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
                 TextBlock lbl = new TextBlock
                 {
                     Text = spaceName,
@@ -369,17 +413,35 @@ namespace MacOSTahoe
                     HorizontalAlignment = HorizontalAlignment.Center,
                     TextTrimming = TextTrimming.CharacterEllipsis
                 };
-                Grid.SetRow(lbl, 1);
-                cardGrid.Children.Add(lbl);
+                TextBlock subLbl = new TextBlock
+                {
+                    Text = countText,
+                    FontSize = 9.5,
+                    Foreground = new SolidColorBrush(Color.FromArgb(175, 235, 235, 245)),
+                    HorizontalAlignment = HorizontalAlignment.Center
+                };
+                titleStack.Children.Add(lbl);
+                titleStack.Children.Add(subLbl);
+                Grid.SetRow(titleStack, 1);
+                cardGrid.Children.Add(titleStack);
 
                 spaceCard.Child = cardGrid;
 
-                // Left click switches space
+                // Left click switches space (or closes Mission Control if already on that space)
                 spaceCard.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
                 {
-                    _currentSpaceIndex = index;
-                    ShellController.Instance.SwitchToSpace(index);
-                    RefreshSpacesBar();
+                    e.Handled = true;
+                    if (_currentSpaceIndex != index)
+                    {
+                        _currentSpaceIndex = index;
+                        ShellController.Instance.SwitchToSpace(index);
+                        RefreshSpacesBar();
+                        PopulateWindows();
+                    }
+                    else
+                    {
+                        HideAnimated();
+                    }
                 };
 
                 // Right click opens space wallpaper / options menu
@@ -407,6 +469,7 @@ namespace MacOSTahoe
                         _isDragging = false;
                         ShellController.Instance.MoveWindowToSpace(_draggedWindow.Hwnd, index);
                         _draggedWindow = null;
+                        RefreshSpacesBar();
                         PopulateWindows();
                     }
                 };
@@ -529,14 +592,33 @@ namespace MacOSTahoe
         private void PopulateWindows()
         {
             _windowsHost.Children.Clear();
-            List<OpenWindowEntry> wins = ShellController.Instance.GetOpenApplicationWindows();
-            _subTitle.Text = string.Format("Открыто окон: {0} — нажмите для переключения или перетащите окно на другое для Split View", wins.Count);
+            List<OpenWindowEntry> allWins = ShellController.Instance.GetOpenApplicationWindows();
+            List<OpenWindowEntry> wins = new List<OpenWindowEntry>();
+            for (int i = 0; i < allWins.Count; i++)
+            {
+                IntPtr h = allWins[i].Hwnd;
+                int space;
+                if (!ShellController.Instance.WindowSpaceMap.TryGetValue(h, out space))
+                {
+                    int assigned = ShellController.Instance.GetAppSpaceAssignment(allWins[i].ProcessName);
+                    space = (assigned >= 0 && assigned < ShellController.Instance.Config.Spaces.Count) ? assigned : ShellController.Instance.Config.CurrentSpaceIndex;
+                    ShellController.Instance.WindowSpaceMap[h] = space;
+                }
+                if (space == _currentSpaceIndex)
+                {
+                    wins.Add(allWins[i]);
+                }
+            }
+
+            _subTitle.Text = string.Format("Рабочий стол {0}: {1} — нажмите на окно или перетащите в Split View / другой стол",
+                _currentSpaceIndex + 1,
+                wins.Count == 0 ? "нет окон" : (wins.Count == 1 ? "1 открытое окно" : wins.Count + " открытых окон"));
 
             if (wins.Count == 0)
             {
                 Border emptyCard = new Border
                 {
-                    Width = 440,
+                    Width = 480,
                     CornerRadius = new CornerRadius(20),
                     Background = LiquidGlassTheme.CreateGlassBrush(200, 220),
                     BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush(),
@@ -547,7 +629,7 @@ namespace MacOSTahoe
                 };
                 emptyCard.Child = new TextBlock
                 {
-                    Text = "Нет открытых окон приложений.\r\nЗапустите программы из Dock или меню «Приложения» (Win).",
+                    Text = string.Format("Рабочий стол {0} пуст.\r\nПеретащите сюда окна из верхнего меню или запустите программы из Dock.", _currentSpaceIndex + 1),
                     FontSize = 14,
                     Foreground = Brushes.White,
                     TextAlignment = TextAlignment.Center
@@ -797,16 +879,19 @@ namespace MacOSTahoe
             card.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
             {
                 e.Handled = true;
-                Hide();
-                if (win.Hwnd != IntPtr.Zero)
+                IntPtr targetHwnd = win.Hwnd;
+                HideAnimated(delegate
                 {
-                    if (NativeMethods.IsIconic(win.Hwnd))
+                    if (targetHwnd != IntPtr.Zero && NativeMethods.IsWindow(targetHwnd))
                     {
-                        NativeMethods.ShowWindow(win.Hwnd, NativeMethods.SW_RESTORE);
+                        if (NativeMethods.IsIconic(targetHwnd))
+                        {
+                            NativeMethods.ShowWindow(targetHwnd, NativeMethods.SW_RESTORE);
+                        }
+                        NativeMethods.SetForegroundWindow(targetHwnd);
+                        NativeMethods.SwitchToThisWindow(targetHwnd, false);
                     }
-                    NativeMethods.SetForegroundWindow(win.Hwnd);
-                    NativeMethods.SwitchToThisWindow(win.Hwnd, false);
-                }
+                });
             };
 
             return card;

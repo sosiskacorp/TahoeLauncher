@@ -26,6 +26,8 @@ namespace MacOSTahoe
     {
         private StackPanel _shelfStack;
         private Border _glassCard;
+        private TranslateTransform _translateTransform;
+        private bool _isClosing = false;
         private Border _desktopBtn;
         private TextBlock _desktopBtnText;
         private string _lastRenderedSignature = "";
@@ -86,6 +88,27 @@ namespace MacOSTahoe
             {
                 _pollTimer.Start();
             }
+        }
+
+
+        public void ShowAnimated()
+        {
+            _isClosing = false;
+            UpdateDimensions();
+            Show();
+            AnimationHelper.SlideRightAndFadeIn(_glassCard, _translateTransform, -70.0, 220);
+        }
+
+        public void HideAnimated(Action onCompleted = null)
+        {
+            if (_isClosing || !IsVisible) return;
+            _isClosing = true;
+            AnimationHelper.SlideLeftAndFadeOut(_glassCard, _translateTransform, -70.0, 180, delegate
+            {
+                Hide();
+                _isClosing = false;
+                if (onCompleted != null) onCompleted();
+            });
         }
 
         public void StartPoll()
@@ -224,6 +247,8 @@ namespace MacOSTahoe
             rootGrid.Children.Add(_desktopBtn);
 
             _glassCard.Child = rootGrid;
+            _translateTransform = new TranslateTransform(0, 0);
+            _glassCard.RenderTransform = _translateTransform;
             Content = _glassCard;
         }
 

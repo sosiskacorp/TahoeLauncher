@@ -22,6 +22,8 @@ namespace MacOSTahoe
         private StackPanel _iconsStack;
         private TextBlock _appNameText;
         private Border _glassCard;
+        private ScaleTransform _scaleTransform;
+        private bool _isClosing = false;
         private List<OpenWindowEntry> _apps = new List<OpenWindowEntry>();
         private List<Border> _itemCards = new List<Border>();
         private int _selectedIndex = 0;
@@ -137,6 +139,9 @@ namespace MacOSTahoe
             };
             root.Children.Add(_appNameText);
 
+            _scaleTransform = new ScaleTransform(1.0, 1.0);
+            _glassCard.RenderTransform = _scaleTransform;
+            _glassCard.RenderTransformOrigin = new Point(0.5, 0.5);
             _glassCard.Child = root;
             Content = _glassCard;
         }
@@ -168,11 +173,13 @@ namespace MacOSTahoe
                 _selectedIndex = (_apps.Count > 1) ? 1 : 0;
                 HighlightSelection();
 
+                _isClosing = false;
                 Show();
                 Activate();
                 UpdateLayout();
                 Left = (SystemParameters.PrimaryScreenWidth - ActualWidth) / 2.0;
                 Top = (SystemParameters.PrimaryScreenHeight - ActualHeight) / 2.0;
+                AnimationHelper.ScaleAndFadeIn(_glassCard, _scaleTransform, 0.94, 150);
             }
             else
             {
@@ -259,33 +266,49 @@ namespace MacOSTahoe
             _appNameText.Text = _apps[_selectedIndex].AppTitle;
         }
 
+        public void HideAnimated(Action onCompleted = null)
+        {
+            if (_isClosing || !IsVisible) return;
+            _isClosing = true;
+            AnimationHelper.ScaleAndFadeOut(_glassCard, _scaleTransform, 0.96, 120, delegate
+            {
+                Hide();
+                _isClosing = false;
+                if (onCompleted != null) onCompleted();
+            });
+        }
+
         public void CommitSelection()
         {
             if (!IsVisible) return;
-            Hide();
 
             // Release any stuck Alt key states in Windows
             NativeMethods.keybd_event(0x12, 0, 2, UIntPtr.Zero);
             NativeMethods.keybd_event(0xA4, 0, 2, UIntPtr.Zero);
             NativeMethods.keybd_event(0xA5, 0, 2, UIntPtr.Zero);
 
+            IntPtr targetHwnd = IntPtr.Zero;
             if (_selectedIndex >= 0 && _selectedIndex < _apps.Count)
             {
-                IntPtr hwnd = _apps[_selectedIndex].Hwnd;
-                if (hwnd != IntPtr.Zero && NativeMethods.IsWindow(hwnd))
+                targetHwnd = _apps[_selectedIndex].Hwnd;
+            }
+
+            HideAnimated(delegate
+            {
+                if (targetHwnd != IntPtr.Zero && NativeMethods.IsWindow(targetHwnd))
                 {
-                    if (NativeMethods.IsIconic(hwnd))
+                    if (NativeMethods.IsIconic(targetHwnd))
                     {
-                        NativeMethods.ShowWindow(hwnd, NativeMethods.SW_RESTORE);
+                        NativeMethods.ShowWindow(targetHwnd, NativeMethods.SW_RESTORE);
                     }
                     else
                     {
-                        NativeMethods.ShowWindow(hwnd, NativeMethods.SW_SHOW);
+                        NativeMethods.ShowWindow(targetHwnd, NativeMethods.SW_SHOW);
                     }
-                    NativeMethods.SetForegroundWindow(hwnd);
-                    NativeMethods.SwitchToThisWindow(hwnd, false);
+                    NativeMethods.SetForegroundWindow(targetHwnd);
+                    NativeMethods.SwitchToThisWindow(targetHwnd, false);
                 }
-            }
+            });
         }
 
         public void QuitSelectedApp()

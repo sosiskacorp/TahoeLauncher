@@ -30,6 +30,9 @@ namespace MacOSTahoe
     public class BackgroundTasksWindow : Window
     {
         private StackPanel _itemsListPanel;
+        private TranslateTransform _translateTransform;
+        private Border _card;
+        private bool _isClosing = false;
         private TextBlock _countText;
         private TextBlock _taskbarToggleText;
 
@@ -50,7 +53,7 @@ namespace MacOSTahoe
 
             Deactivated += delegate(object s, EventArgs e)
             {
-                Hide();
+                if (!_isClosing && IsVisible) HideAnimated();
             };
 
             SourceInitialized += delegate(object s, EventArgs e)
@@ -307,6 +310,9 @@ namespace MacOSTahoe
             root.Children.Add(footer);
 
             card.Child = root;
+            _card = card;
+            _translateTransform = new TranslateTransform(0, 0);
+            _card.RenderTransform = _translateTransform;
             Content = card;
         }
 
@@ -441,6 +447,31 @@ namespace MacOSTahoe
             }
 
             return exeName;
+        }
+
+
+        public void ShowAnimated()
+        {
+            _isClosing = false;
+            RefreshTasks();
+            Left = Math.Max(10, SystemParameters.PrimaryScreenWidth - Width - 12);
+            Top = (ShellController.Instance != null && ShellController.Instance.Config.ShowTopBar) ? 34 : 12;
+            Show();
+            Activate();
+
+            AnimationHelper.SlideDownAndFadeIn(_card, _translateTransform, -16.0, 180);
+        }
+
+        public void HideAnimated(Action onCompleted = null)
+        {
+            if (_isClosing || !IsVisible) return;
+            _isClosing = true;
+            AnimationHelper.SlideUpAndFadeOut(_card, _translateTransform, -14.0, 130, delegate
+            {
+                Hide();
+                _isClosing = false;
+                if (onCompleted != null) onCompleted();
+            });
         }
 
         public void RefreshTasks()

@@ -40,6 +40,9 @@ namespace MacOSTahoe
         private TextBlock _dockHideSub;
         private Border _stageManagerTile;
         private TextBlock _stageManagerSub;
+        private TranslateTransform _translateTransform;
+        private Border _card;
+        private bool _isClosing = false;
 
         public ControlCenterWindow()
         {
@@ -58,13 +61,16 @@ namespace MacOSTahoe
 
             Deactivated += delegate(object s, EventArgs e)
             {
-                Hide();
+                if (!_isClosing && IsVisible) HideAnimated();
             };
         }
 
         private void BuildUI()
         {
             Border card = new Border();
+            _card = card;
+            _translateTransform = new TranslateTransform(0, 0);
+            _card.RenderTransform = _translateTransform;
             card.Margin = new Thickness(12);
             card.CornerRadius = new CornerRadius(24);
             card.Background = LiquidGlassTheme.CreateGlassBrush(226, 240);
@@ -283,6 +289,31 @@ namespace MacOSTahoe
             chip.Child = new TextBlock { Text = text, Foreground = Brushes.White, FontSize = 11.5, FontWeight = FontWeights.SemiBold };
             chip.MouseLeftButtonDown += delegate { if (onClick != null) onClick(); };
             return chip;
+        }
+
+
+        public void ShowAnimated()
+        {
+            _isClosing = false;
+            RefreshState();
+            Left = SystemParameters.PrimaryScreenWidth - Width - 12;
+            Top = (ShellController.Instance != null && ShellController.Instance.Config.ShowTopBar) ? 34 : 12;
+            Show();
+            Activate();
+
+            AnimationHelper.SlideDownAndFadeIn(_card, _translateTransform, -16.0, 180);
+        }
+
+        public void HideAnimated(Action onCompleted = null)
+        {
+            if (_isClosing || !IsVisible) return;
+            _isClosing = true;
+            AnimationHelper.SlideUpAndFadeOut(_card, _translateTransform, -14.0, 130, delegate
+            {
+                Hide();
+                _isClosing = false;
+                if (onCompleted != null) onCompleted();
+            });
         }
 
         public void RefreshState()
