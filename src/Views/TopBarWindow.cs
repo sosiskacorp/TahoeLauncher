@@ -95,7 +95,7 @@ namespace MacOSTahoe
 
         private IntPtr KeyboardHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
         {
-            if (nCode >= 0 && ShellController.Instance != null && ShellController.Instance.Config.InterceptWinKey)
+            if (nCode >= 0 && ShellController.Instance != null)
             {
                 int msg = wParam.ToInt32();
                 int vkCode = Marshal.ReadInt32(lParam);
@@ -123,7 +123,7 @@ namespace MacOSTahoe
                             bool soloTap = (_winKeyDown && !_otherKeyWhileWin);
                             _winKeyDown = false;
                             _otherKeyWhileWin = false;
-                            if (soloTap)
+                            if (soloTap && ShellController.Instance.Config.InterceptWinKey)
                             {
                                 NativeMethods.keybd_event(0xFF, 0, 0, UIntPtr.Zero);
                                 NativeMethods.keybd_event(0xFF, 0, 2, UIntPtr.Zero);
@@ -134,9 +134,45 @@ namespace MacOSTahoe
                             }
                         }
                     }
-                    else if (isKeyDown && _winKeyDown)
+                    else if (isKeyDown)
                     {
-                        _otherKeyWhileWin = true;
+                        if (_winKeyDown)
+                        {
+                            _otherKeyWhileWin = true;
+                        }
+
+                        // Hotkey: Win + Shift + A -> Launcher Settings Hub
+                        if (vkCode == 0x41) // 'A'
+                        {
+                            bool isWinDown = _winKeyDown || ((NativeMethods.GetAsyncKeyState(0x5B) & 0x8000) != 0) || ((NativeMethods.GetAsyncKeyState(0x5C) & 0x8000) != 0);
+                            bool isShiftDown = ((NativeMethods.GetAsyncKeyState(0x10) & 0x8000) != 0) || ((NativeMethods.GetAsyncKeyState(0xA0) & 0x8000) != 0) || ((NativeMethods.GetAsyncKeyState(0xA1) & 0x8000) != 0);
+
+                            if (isWinDown && isShiftDown)
+                            {
+                                _otherKeyWhileWin = true;
+                                Dispatcher.BeginInvoke(new Action(delegate
+                                {
+                                    ShellController.Instance.ShowLauncherSettings();
+                                }));
+                                return (IntPtr)1;
+                            }
+                        }
+
+                        // Hotkey: Alt + Space -> Quick Spotlight Search
+                        if (vkCode == 0x20) // Space
+                        {
+                            bool isAltDown = ((NativeMethods.GetAsyncKeyState(0x12) & 0x8000) != 0) || ((NativeMethods.GetAsyncKeyState(0xA4) & 0x8000) != 0) || ((NativeMethods.GetAsyncKeyState(0xA5) & 0x8000) != 0);
+                            bool isCtrlDown = ((NativeMethods.GetAsyncKeyState(0x11) & 0x8000) != 0);
+
+                            if (isAltDown && !isCtrlDown)
+                            {
+                                Dispatcher.BeginInvoke(new Action(delegate
+                                {
+                                    ShellController.Instance.ToggleSpotlight();
+                                }));
+                                return (IntPtr)1;
+                            }
+                        }
                     }
                 }
             }
