@@ -103,13 +103,21 @@ if ($secTrayWnd -ne [IntPtr]::Zero) {
     [MacOSNative]::ShowWindow($secTrayWnd, 0) | Out-Null
 }
 
-# 6. Build if MacOSTahoe.exe is missing, then launch
+# 6. Optimize instant startup (0 delay) and register direct binary in Run
+$serPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Serialize'
+if (-not (Test-Path $serPath)) { New-Item -Path $serPath -Force | Out-Null }
+Set-ItemProperty -Path $serPath -Name 'StartupDelayInMSec' -Value 0 -Type DWord
+
 $tahoeExe = Join-Path $rootDir 'MacOSTahoe.exe'
+Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'macOS_Tahoe_Apply' -ErrorAction SilentlyContinue
+Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'TahoeLauncher' -Value $tahoeExe
+
+# 7. Build if MacOSTahoe.exe is missing, then launch
 $buildScript = Join-Path $rootDir 'build.ps1'
 if (-not (Test-Path $tahoeExe) -and (Test-Path $buildScript)) {
     & powershell -ExecutionPolicy Bypass -File $buildScript
 }
 
 if ((Test-Path $tahoeExe) -and -not (Get-Process -Name 'MacOSTahoe' -ErrorAction SilentlyContinue)) {
-    Start-Process -FilePath $tahoeExe -WorkingDirectory $rootDir
+    Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine = $tahoeExe; CurrentDirectory = $rootDir} | Out-Null
 }

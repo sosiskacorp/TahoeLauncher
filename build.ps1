@@ -5,7 +5,10 @@
 
 $ErrorActionPreference = 'Stop'
 $rootDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
-$srcFile = Join-Path $rootDir 'src\MacOSTahoe.cs'
+$srcFiles = (Get-ChildItem -Path (Join-Path $rootDir 'src') -Recurse -Filter *.cs).FullName
+if (-not $srcFiles -or $srcFiles.Count -eq 0) {
+    throw "No C# source files found in src directory"
+}
 $outExe  = Join-Path $rootDir 'MacOSTahoe.exe'
 $iconIco = Join-Path $rootDir 'icons\launchpad.ico'
 
@@ -39,7 +42,7 @@ if (Test-Path $iconIco) {
     $cscArgs += "/win32icon:$iconIco"
 }
 
-$cscArgs += $srcFile
+$cscArgs += $srcFiles
 
 Write-Host "Building Tahoe Liquid Glass Launcher -> $outExe ..." -ForegroundColor Cyan
 & $csc @cscArgs
