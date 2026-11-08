@@ -140,6 +140,9 @@ namespace MacOSTahoe
         [DllImport("user32.dll", EntryPoint = "SystemParametersInfoW")]
         public static extern bool SystemParametersInfoRect(uint uiAction, uint uiParam, ref RECT pvParam, uint fWinIni);
 
+        [DllImport("user32.dll")]
+        public static extern int GetSystemMetrics(int nIndex);
+
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         public static extern uint RegisterWindowMessage(string lpString);
 
@@ -434,6 +437,33 @@ namespace MacOSTahoe
                 }
             }
             catch { }
+        }
+
+        public static void RestoreWorkArea()
+        {
+            try
+            {
+                int w = GetSystemMetrics(0); // SM_CXSCREEN
+                int h = GetSystemMetrics(1); // SM_CYSCREEN
+                if (w <= 0) w = (int)SystemParameters.PrimaryScreenWidth;
+                if (h <= 0) h = (int)SystemParameters.PrimaryScreenHeight;
+
+                RECT fullRect = new RECT
+                {
+                    Left = 0,
+                    Top = 0,
+                    Right = w,
+                    Bottom = h
+                };
+                SystemParametersInfoRect(0x002F /* SPI_SETWORKAREA */, 0, ref fullRect, 3);
+            }
+            catch { }
+        }
+
+        public static void RestoreAllNativeShell()
+        {
+            RestoreNativeTaskbars();
+            RestoreWorkArea();
         }
     }
 

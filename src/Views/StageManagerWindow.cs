@@ -28,6 +28,7 @@ namespace MacOSTahoe
         private Border _glassCard;
         private Border _desktopBtn;
         private TextBlock _desktopBtnText;
+        private string _lastRenderedSignature = "";
         private DispatcherTimer _pollTimer;
         private bool _isHovered = false;
         private bool _isCardDragging = false;
@@ -100,6 +101,7 @@ namespace MacOSTahoe
         public void StopPoll()
         {
             if (_pollTimer != null && _pollTimer.IsEnabled) _pollTimer.Stop();
+            _lastRenderedSignature = "";
         }
 
         public void UpdateDimensions()
@@ -303,10 +305,31 @@ namespace MacOSTahoe
             }
 
             List<StageGroup> allGroups = ShellController.Instance.RefreshStageGroups();
+            StageGroup activeGroup = ShellController.Instance.ActiveStageGroup;
+
+            // Performance: Compute signature of visible shelf cards to avoid rebuilding DOM every 800ms
+            StringBuilder sig = new StringBuilder();
+            sig.Append(ShellController.Instance.IsStageDesktopRevealed ? "D1" : "D0");
+            sig.Append("|");
+            sig.Append(activeGroup != null ? activeGroup.Id : "none");
+            sig.Append("|");
+            for (int i = 0; i < allGroups.Count && i < 6; i++)
+            {
+                StageGroup g = allGroups[i];
+                if (g == activeGroup && !ShellController.Instance.IsStageDesktopRevealed) continue;
+                sig.Append(g.Id).Append(":").Append(g.Windows.Count).Append(";");
+            }
+            string currentSig = sig.ToString();
+
+            if (currentSig == _lastRenderedSignature && _shelfStack.Children.Count > 0)
+            {
+                UpdateDesktopBtnState();
+                return;
+            }
+            _lastRenderedSignature = currentSig;
+
             _shelfStack.Children.Clear();
             UpdateDesktopBtnState();
-
-            StageGroup activeGroup = ShellController.Instance.ActiveStageGroup;
 
             int renderedCount = 0;
             for (int i = 0; i < allGroups.Count; i++)

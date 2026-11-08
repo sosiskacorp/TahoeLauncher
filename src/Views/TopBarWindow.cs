@@ -38,6 +38,8 @@ namespace MacOSTahoe
         private bool _appBarRegistered = false;
         private uint _appBarCallbackMsg = 0;
         private DispatcherTimer _pollTimer;
+        private static readonly CultureInfo RuCulture = new CultureInfo("ru-RU");
+        private uint _selfPid = 0;
         private IntPtr _kbHookHandle = IntPtr.Zero;
         private NativeMethods.LowLevelKeyboardProc _kbHookProc;
         private bool _winKeyDown = false;
@@ -63,8 +65,10 @@ namespace MacOSTahoe
             SourceInitialized += OnSourceInitialized;
             Closed += OnClosed;
 
+            try { _selfPid = (uint)Process.GetCurrentProcess().Id; } catch { }
+
             _pollTimer = new DispatcherTimer();
-            _pollTimer.Interval = TimeSpan.FromMilliseconds(200);
+            _pollTimer.Interval = TimeSpan.FromMilliseconds(1000); // 1.0s instead of 200ms
             _pollTimer.Tick += OnPollTick;
             _pollTimer.Start();
             OnPollTick(null, EventArgs.Empty);
@@ -1061,17 +1065,15 @@ namespace MacOSTahoe
             {
                 ShellController.Instance.CheckHotCorners(curPt.X, curPt.Y);
             }
-            NativeMethods.HideNativeTaskbars();
             if (_appBarRegistered && ShellController.Instance.Config.ShowTopBar && SystemParameters.WorkArea.Top < 26)
             {
                 EnforceWorkArea();
             }
 
             DateTime now = DateTime.Now;
-            CultureInfo ru = new CultureInfo("ru-RU");
-            string dayName = now.ToString("ddd", ru);
+            string dayName = now.ToString("ddd", RuCulture);
             if (dayName.Length > 0) dayName = char.ToUpper(dayName[0]) + dayName.Substring(1);
-            string monthName = now.ToString("MMM", ru).TrimEnd('.');
+            string monthName = now.ToString("MMM", RuCulture).TrimEnd('.');
             _clockText.Text = string.Format("{0}, {1} {2}.  {3:HH:mm}", dayName, now.Day, monthName, now);
 
             NativeMethods.MEMORYSTATUSEX mem = new NativeMethods.MEMORYSTATUSEX();
@@ -1090,7 +1092,7 @@ namespace MacOSTahoe
                 int langId = hkl.ToInt32() & 0xFFFF;
                 _langText.Text = (langId == 0x0419) ? "RU" : "EN";
 
-                if (pid != (uint)Process.GetCurrentProcess().Id)
+                if (pid != _selfPid && _selfPid != 0)
                 {
                     StringBuilder fgCls = new StringBuilder(128);
                     NativeMethods.GetClassName(fg, fgCls, fgCls.Capacity);
@@ -1104,6 +1106,13 @@ namespace MacOSTahoe
                     }
                 }
             }
+        }
+
+        private static readonly Dictionary<uint, CachedAppNameEntry> _appNameCache = new Dictionary<uint, CachedAppNameEntry>();
+        private class CachedAppNameEntry
+        {
+            public string Name;
+            public DateTime Time;
         }
 
         private string ResolveFriendlyAppName(IntPtr hwnd, uint pid)
@@ -1122,20 +1131,33 @@ namespace MacOSTahoe
                     return "Проводник";
                 }
 
-                Process p = Process.GetProcessById((int)pid);
-                string pn = p.ProcessName;
-                if (string.Equals(pn, "explorer", StringComparison.OrdinalIgnoreCase)) return "Проводник";
-                if (string.Equals(pn, "chrome", StringComparison.OrdinalIgnoreCase)) return "Chrome";
-                if (string.Equals(pn, "Antigravity", StringComparison.OrdinalIgnoreCase)) return "Antigravity";
-                if (string.Equals(pn, "OpenCode", StringComparison.OrdinalIgnoreCase)) return "OpenCode";
-                if (string.Equals(pn, "iMe", StringComparison.OrdinalIgnoreCase) || string.Equals(pn, "Telegram", StringComparison.OrdinalIgnoreCase)) return "iMe";
-                if (pn.IndexOf("Яндекс", StringComparison.OrdinalIgnoreCase) >= 0) return "Яндекс Музыка";
-                if (pn.IndexOf("steam", StringComparison.OrdinalIgnoreCase) >= 0) return "Steam";
-                if (string.Equals(pn, "WindowsTerminal", StringComparison.OrdinalIgnoreCase) || string.Equals(pn, "powershell", StringComparison.OrdinalIgnoreCase)) return "Терминал";
-                if (string.Equals(pn, "SystemSettings", StringComparison.OrdinalIgnoreCase)) return "Параметры";
-                if (string.Equals(pn, "Taskmgr", StringComparison.OrdinalIgnoreCase)) return "Диспетчер задач";
-                if (string.Equals(pn, "Code", StringComparison.OrdinalIgnoreCase)) return "VS Code";
-                return pn;
+                CachedAppNameEntry cached;
+                if (_appNameCache.TryGetValue(pid, out cached))
+                {
+                    if ((DateTime.Now - cached.Time).TotalSeconds < 15.0) return cached.Name;
+                }
+
+                string pn = "";
+                using (Process p = Process.GetProcessById((int)pid))
+                {
+                    pn = p.ProcessName;
+                }
+
+                string friendly = pn;
+                if (string.Equals(pn, "explorer", StringComparison.OrdinalIgnoreCase)) friendly = "Проводник";
+                else if (string.Equals(pn, "chrome", StringComparison.OrdinalIgnoreCase)) friendly = "Chrome";
+                else if (string.Equals(pn, "Antigravity", StringComparison.OrdinalIgnoreCase)) friendly = "Antigravity";
+                else if (string.Equals(pn, "OpenCode", StringComparison.OrdinalIgnoreCase)) friendly = "OpenCode";
+                else if (string.Equals(pn, "iMe", StringComparison.OrdinalIgnoreCase) || string.Equals(pn, "Telegram", StringComparison.OrdinalIgnoreCase)) friendly = "iMe";
+                else if (pn.IndexOf("Яндекс", StringComparison.OrdinalIgnoreCase) >= 0) friendly = "Яндекс Музыка";
+                else if (pn.IndexOf("steam", StringComparison.OrdinalIgnoreCase) >= 0) friendly = "Steam";
+                else if (string.Equals(pn, "WindowsTerminal", StringComparison.OrdinalIgnoreCase) || string.Equals(pn, "powershell", StringComparison.OrdinalIgnoreCase)) friendly = "Терминал";
+                else if (string.Equals(pn, "SystemSettings", StringComparison.OrdinalIgnoreCase)) friendly = "Параметры";
+                else if (string.Equals(pn, "Taskmgr", StringComparison.OrdinalIgnoreCase)) friendly = "Диспетчер задач";
+                else if (string.Equals(pn, "Code", StringComparison.OrdinalIgnoreCase)) friendly = "VS Code";
+
+                _appNameCache[pid] = new CachedAppNameEntry { Name = friendly, Time = DateTime.Now };
+                return friendly;
             }
             catch
             {

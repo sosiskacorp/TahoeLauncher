@@ -41,13 +41,26 @@ namespace MacOSTahoe
             {
                 for (int i = 0; i < args.Length; i++)
                 {
-                    if (string.Equals(args[i], "--quit", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(args[i], "-x", StringComparison.OrdinalIgnoreCase))
+                    string a = args[i].ToLowerInvariant();
+                    if (a == "--quit" || a == "-x" || a == "--restore" || a == "-r")
                     {
                         quitOnly = true;
                     }
                 }
             }
+
+            // P0: Register emergency crash recovery handlers to restore Taskbar & WorkArea
+            AppDomain.CurrentDomain.UnhandledException += delegate(object s, UnhandledExceptionEventArgs e)
+            {
+                NativeMethods.RestoreAllNativeShell();
+            };
+            AppDomain.CurrentDomain.ProcessExit += delegate(object s, EventArgs e)
+            {
+                if (ShellController.Instance != null && !ShellController.Instance.IsCleanShutdown)
+                {
+                    NativeMethods.RestoreAllNativeShell();
+                }
+            };
 
             int myPid = Process.GetCurrentProcess().Id;
             foreach (Process p in Process.GetProcessesByName("MacOSTahoe"))
@@ -55,20 +68,13 @@ namespace MacOSTahoe
                 if (p.Id != myPid)
                 {
                     try { p.Kill(); } catch { }
+                    try { p.Dispose(); } catch { }
                 }
             }
 
             if (quitOnly)
             {
-                NativeMethods.RestoreNativeTaskbars();
-                NativeMethods.RECT fullRect = new NativeMethods.RECT
-                {
-                    Left = 0,
-                    Top = 0,
-                    Right = (int)SystemParameters.PrimaryScreenWidth,
-                    Bottom = (int)SystemParameters.PrimaryScreenHeight
-                };
-                NativeMethods.SystemParametersInfoRect(0x002F, 0, ref fullRect, 0);
+                NativeMethods.RestoreAllNativeShell();
                 return;
             }
 
@@ -84,6 +90,11 @@ namespace MacOSTahoe
 
                 Application app = new Application();
                 app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                app.DispatcherUnhandledException += delegate(object s, DispatcherUnhandledExceptionEventArgs e)
+                {
+                    NativeMethods.RestoreAllNativeShell();
+                };
+
                 ShellController controller = new ShellController();
                 controller.Start(args);
                 app.Run();

@@ -143,6 +143,8 @@ namespace MacOSTahoe
         public Border RootContainer;
         public Grid IconWrapper;
         public Image IconImage;
+        public ScaleTransform IconScaleTransform;
+        public TranslateTransform IconTranslateTransform;
         public Border RunningDot;
         public double CurrentSize = 50.0;
         public double TargetSize = 50.0;

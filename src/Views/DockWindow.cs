@@ -44,7 +44,56 @@ namespace MacOSTahoe
         private double _targetSlideY = 0.0;
         private bool _activeWindowIsMaximized = false;
         private bool _dockRevealedByMouse = false;
+        private bool _isRenderingActive = false;
         private DispatcherTimer _windowScanTimer;
+
+        public void EnsureRenderingActive()
+        {
+            if (!_isRenderingActive)
+            {
+                _isRenderingActive = true;
+                _lastFrameTime = ElapsedSeconds;
+                CompositionTarget.Rendering += OnRenderFrame;
+            }
+        }
+
+        public void StopRendering()
+        {
+            if (_isRenderingActive)
+            {
+                _isRenderingActive = false;
+                CompositionTarget.Rendering -= OnRenderFrame;
+            }
+        }
+
+        private static readonly Dictionary<uint, CachedProcEntry> _procNameCache = new Dictionary<uint, CachedProcEntry>();
+        private class CachedProcEntry
+        {
+            public string Name;
+            public double Timestamp;
+        }
+
+        private string GetFastProcessName(uint pid, double now)
+        {
+            CachedProcEntry entry;
+            if (_procNameCache.TryGetValue(pid, out entry))
+            {
+                if (now - entry.Timestamp < 15.0) return entry.Name;
+            }
+
+            string name = "";
+            try
+            {
+                using (Process p = Process.GetProcessById((int)pid))
+                {
+                    name = p.ProcessName;
+                }
+            }
+            catch { }
+
+            _procNameCache[pid] = new CachedProcEntry { Name = name, Timestamp = now };
+            return name;
+        }
 
         private const double ItemMarginX = 3.5;
 
@@ -86,10 +135,13 @@ namespace MacOSTahoe
                 NativeMethods.MakeToolWindow(this, true);
             };
 
-            CompositionTarget.Rendering += OnRenderFrame;
+            MouseEnter += delegate { EnsureRenderingActive(); };
+            MouseMove += delegate { EnsureRenderingActive(); };
+
+            EnsureRenderingActive();
 
             _windowScanTimer = new DispatcherTimer();
-            _windowScanTimer.Interval = TimeSpan.FromMilliseconds(600);
+            _windowScanTimer.Interval = TimeSpan.FromMilliseconds(1500); // 1.5s instead of 600ms
             _windowScanTimer.Tick += OnScanRunningWindows;
             _windowScanTimer.Start();
             OnScanRunningWindows(null, EventArgs.Empty);
@@ -211,6 +263,17 @@ namespace MacOSTahoe
                 Opacity = 0.42,
                 Color = Colors.Black
             };
+
+            TransformGroup tg = new TransformGroup();
+            ScaleTransform st = new ScaleTransform(1.0, 1.0);
+            TranslateTransform tt = new TranslateTransform(0.0, 0.0);
+            tg.Children.Add(st);
+            tg.Children.Add(tt);
+            img.RenderTransformOrigin = new Point(0.5, 1.0);
+            img.RenderTransform = tg;
+            item.IconScaleTransform = st;
+            item.IconTranslateTransform = tt;
+
             wrapper.Children.Add(img);
 
             Border dot = new Border();
@@ -569,27 +632,27 @@ namespace MacOSTahoe
                 item.CurrentSize += (item.TargetSize - item.CurrentSize) * sizeLerp;
                 item.CurrentLift += ((item.TargetLift + bounceOffset) - item.CurrentLift) * sizeLerp;
 
-                if (item.IconWrapper != null)
+                double scale = (baseSize > 0) ? (item.CurrentSize / baseSize) : 1.0;
+                if (item.IconScaleTransform != null)
                 {
-                    item.IconWrapper.Width = item.CurrentSize;
-                    item.IconWrapper.Height = item.CurrentSize;
+                    item.IconScaleTransform.ScaleX = scale;
+                    item.IconScaleTransform.ScaleY = scale;
                 }
-                if (item.IconImage != null)
+                if (item.IconTranslateTransform != null)
                 {
-                    item.IconImage.Margin = new Thickness(0, 0, 0, item.CurrentLift);
+                    item.IconTranslateTransform.Y = -item.CurrentLift;
                 }
 
                 totalShelfWidth += item.CurrentSize + (ItemMarginX * 2.0);
             }
 
-            _glassShelf.Height = baseSize + 14;
-            _glassShelf.Width = Math.Max(200.0, totalShelfWidth);
+            double shelfW = Math.Max(200.0, unmagnifiedRowWidth + 24.0);
+            if (Math.Abs(_glassShelf.Width - shelfW) > 1.0) _glassShelf.Width = shelfW;
 
             if (hoveredClosest != null && dockActiveHover && !popupOpen)
             {
                 _tooltipText.Text = hoveredClosest.Name;
-                _tooltipPill.Visibility = Visibility.Visible;
-                _tooltipPill.UpdateLayout();
+                if (_tooltipPill.Visibility != Visibility.Visible) _tooltipPill.Visibility = Visibility.Visible;
                 Point centerPt = hoveredClosest.RootContainer.TranslatePoint(
                     new Point(hoveredClosest.RootContainer.ActualWidth / 2.0, 0), _outerRoot);
                 double pillLeft = centerPt.X - (_tooltipPill.ActualWidth / 2.0);
@@ -601,12 +664,48 @@ namespace MacOSTahoe
                 if (_tooltipPill.Visibility != Visibility.Hidden)
                     _tooltipPill.Visibility = Visibility.Hidden;
             }
+
+            // Idle check: if mouse is outside dock and icons settled, STOP rendering loop to save 100% idle CPU
+            bool anyActive = dockActiveHover || _dockRevealedByMouse || (Math.Abs(_currentSlideY - _targetSlideY) > 0.4);
+            bool anyItemMoving = false;
+            for (int i = 0; i < items.Count; i++)
+            {
+                DockAppItem it = items[i];
+                if (Math.Abs(it.CurrentSize - baseSize) > 0.2 || Math.Abs(it.CurrentLift) > 0.2 || (now - it.BounceStartTime < 1.3))
+                {
+                    anyItemMoving = true;
+                    break;
+                }
+            }
+
+            if (!anyActive && !anyItemMoving && !popupOpen)
+            {
+                _currentSlideY = _targetSlideY;
+                _dockSlideTransform.Y = _currentSlideY;
+                for (int i = 0; i < items.Count; i++)
+                {
+                    items[i].CurrentSize = baseSize;
+                    items[i].CurrentLift = 0.0;
+                    if (items[i].IconScaleTransform != null)
+                    {
+                        items[i].IconScaleTransform.ScaleX = 1.0;
+                        items[i].IconScaleTransform.ScaleY = 1.0;
+                    }
+                    if (items[i].IconTranslateTransform != null)
+                    {
+                        items[i].IconTranslateTransform.Y = 0.0;
+                    }
+                }
+                if (_tooltipPill.Visibility != Visibility.Hidden) _tooltipPill.Visibility = Visibility.Hidden;
+                StopRendering();
+            }
         }
 
         private void OnScanRunningWindows(object sender, EventArgs e)
         {
             try
             {
+                double now = ElapsedSeconds;
                 Dictionary<string, IntPtr> procWindows = new Dictionary<string, IntPtr>(StringComparer.OrdinalIgnoreCase);
                 Dictionary<string, uint> procPids = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
                 Dictionary<string, string> procTitles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -661,26 +760,23 @@ namespace MacOSTahoe
                     NativeMethods.GetWindowThreadProcessId(hWnd, out pid);
                     if (pid == selfPid) return true;
 
-                    try
+                    string pn = GetFastProcessName(pid, now);
+                    if (string.IsNullOrEmpty(pn)) return true;
+
+                    if (string.Equals(pn, "seelen-ui", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(pn, "TextInputHost", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(pn, "SearchHost", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(pn, "ShellExperienceHost", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(pn, "StartMenuExperienceHost", StringComparison.OrdinalIgnoreCase))
                     {
-                        Process p = Process.GetProcessById((int)pid);
-                        string pn = p.ProcessName;
-                        if (string.Equals(pn, "seelen-ui", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(pn, "TextInputHost", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(pn, "SearchHost", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(pn, "ShellExperienceHost", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(pn, "StartMenuExperienceHost", StringComparison.OrdinalIgnoreCase))
-                        {
-                            return true;
-                        }
-                        if (!procWindows.ContainsKey(pn))
-                        {
-                            procWindows[pn] = hWnd;
-                            procPids[pn] = pid;
-                            procTitles[pn] = winTitle;
-                        }
+                        return true;
                     }
-                    catch { }
+                    if (!procWindows.ContainsKey(pn))
+                    {
+                        procWindows[pn] = hWnd;
+                        procPids[pn] = pid;
+                        procTitles[pn] = winTitle;
+                    }
                     return true;
                 }, IntPtr.Zero);
 

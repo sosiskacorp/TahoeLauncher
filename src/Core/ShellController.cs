@@ -892,7 +892,7 @@ namespace MacOSTahoe
             }
 
             _catalogVerifyTimer = new DispatcherTimer();
-            _catalogVerifyTimer.Interval = TimeSpan.FromSeconds(8);
+            _catalogVerifyTimer.Interval = TimeSpan.FromSeconds(120); // 2 min fallback, FileSystemWatcher handles live updates
             _catalogVerifyTimer.Tick += delegate
             {
                 if (RefreshInstalledApps() && Launchpad != null && Launchpad.IsVisible)
@@ -1198,6 +1198,7 @@ namespace MacOSTahoe
                     BitmapImage bmp = new BitmapImage();
                     bmp.BeginInit();
                     bmp.CacheOption = BitmapCacheOption.OnLoad;
+                    bmp.DecodePixelWidth = 96; // Downscale to 96px, reducing memory by ~90%
                     bmp.UriSource = new Uri(fullPath, UriKind.Absolute);
                     bmp.EndInit();
                     bmp.Freeze();
@@ -1211,23 +1212,17 @@ namespace MacOSTahoe
 
         public void Start(string[] cliArgs)
         {
+            // Always active core shell
             TopBar = new TopBarWindow();
             Dock = new DockWindow();
-            DesktopWidgets = new DesktopWidgetsWindow();
-            Spotlight = new SpotlightWindow();
-            Launchpad = new LaunchpadWindow();
-            WindowSwitcher = new WindowSwitcherWindow();
-            ControlCenter = new ControlCenterWindow();
-            CalendarPopup = new CalendarWidgetWindow();
-            StageManager = new StageManagerWindow();
-            AppSwitcher = new AppSwitcherWindow();
-            SplitViewDivider = new SplitViewDividerWindow();
-            SplitViewPicker = new SplitViewPickerWindow();
+            if (Config.ShowDesktopWidgets) DesktopWidgets = new DesktopWidgetsWindow();
 
             ApplyModuleVisibility();
 
             if (Config.EnableStageManager)
             {
+                if (StageManager == null) StageManager = new StageManagerWindow();
+                StageManager.StartPoll();
                 StageManager.RefreshShelf();
                 StageManager.Show();
             }
@@ -1276,8 +1271,11 @@ namespace MacOSTahoe
                 NativeMethods.RestoreNativeTaskbars();
         }
 
+        public bool IsCleanShutdown = false;
+
         public void ShutdownAndRestoreWindows()
         {
+            IsCleanShutdown = true;
             try
             {
                 if (TopBar != null) TopBar.UnregisterAndRestoreWorkArea();
@@ -1309,6 +1307,7 @@ namespace MacOSTahoe
         public void ToggleSpotlight()
         {
             if (Spotlight == null) Spotlight = new SpotlightWindow();
+            if (Spotlight == null) Spotlight = new SpotlightWindow();
             if (Spotlight.IsVisible)
             {
                 Spotlight.Hide();
@@ -1323,6 +1322,7 @@ namespace MacOSTahoe
         public void ToggleLaunchpad()
         {
             if (Launchpad == null) Launchpad = new LaunchpadWindow();
+            if (Launchpad == null) Launchpad = new LaunchpadWindow();
             if (Launchpad.IsVisible)
             {
                 Launchpad.HideWithAnimation();
@@ -1336,6 +1336,7 @@ namespace MacOSTahoe
 
         public void ToggleWindowSwitcher()
         {
+            if (WindowSwitcher == null) WindowSwitcher = new WindowSwitcherWindow();
             if (WindowSwitcher == null) WindowSwitcher = new WindowSwitcherWindow();
             if (WindowSwitcher.IsVisible)
             {
@@ -1872,8 +1873,10 @@ namespace MacOSTahoe
             if (!Config.EnableHotCorners) return;
             if ((DateTime.Now - _lastHotCornerTrigger).TotalMilliseconds < 1200) return;
 
-            int screenW = (int)SystemParameters.PrimaryScreenWidth;
-            int screenH = (int)SystemParameters.PrimaryScreenHeight;
+            int screenW = NativeMethods.GetSystemMetrics(0 /* SM_CXSCREEN */);
+            int screenH = NativeMethods.GetSystemMetrics(1 /* SM_CYSCREEN */);
+            if (screenW <= 0) screenW = (int)SystemParameters.PrimaryScreenWidth;
+            if (screenH <= 0) screenH = (int)SystemParameters.PrimaryScreenHeight;
 
             if (mouseX <= 2 && mouseY <= 2)
             {
@@ -1939,6 +1942,7 @@ namespace MacOSTahoe
 
         public void ToggleControlCenter()
         {
+            if (ControlCenter == null) ControlCenter = new ControlCenterWindow();
             if (ControlCenter == null) ControlCenter = new ControlCenterWindow();
             if (ControlCenter.IsVisible)
             {
