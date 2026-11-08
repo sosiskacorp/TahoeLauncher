@@ -764,7 +764,7 @@ namespace MacOSTahoe
                     if (NativeMethods.GetWindow(hWnd, 4) != IntPtr.Zero) return true;
 
                     StringBuilder sbTitle = new StringBuilder(256);
-                    if (NativeMethods.GetWindowText(hWnd, sbTitle, sbTitle.Capacity) <= 0) return true;
+                    NativeMethods.GetWindowText(hWnd, sbTitle, sbTitle.Capacity);
                     string winTitle = sbTitle.ToString();
 
                     StringBuilder sbClass = new StringBuilder(128);
@@ -787,6 +787,7 @@ namespace MacOSTahoe
 
                     string pn = GetFastProcessName(pid, now);
                     if (string.IsNullOrEmpty(pn)) return true;
+                    if (string.IsNullOrEmpty(winTitle)) winTitle = pn;
 
                     if (string.Equals(pn, "seelen-ui", StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(pn, "TextInputHost", StringComparison.OrdinalIgnoreCase) ||

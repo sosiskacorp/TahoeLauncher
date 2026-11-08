@@ -884,12 +884,7 @@ namespace MacOSTahoe
                 {
                     if (targetHwnd != IntPtr.Zero && NativeMethods.IsWindow(targetHwnd))
                     {
-                        if (NativeMethods.IsIconic(targetHwnd))
-                        {
-                            NativeMethods.ShowWindow(targetHwnd, NativeMethods.SW_RESTORE);
-                        }
-                        NativeMethods.SetForegroundWindow(targetHwnd);
-                        NativeMethods.SwitchToThisWindow(targetHwnd, false);
+                        NativeMethods.ForceForegroundWindow(targetHwnd);
                     }
                 });
             };

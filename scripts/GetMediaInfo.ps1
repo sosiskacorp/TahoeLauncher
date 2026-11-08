@@ -19,7 +19,11 @@ if (-not $cur) {
     exit
 }
 
-if ($Action -eq "PlayPause") {
+if ($Action -eq "Play") {
+    $cur.TryPlayAsync() | Out-Null
+} elseif ($Action -eq "Pause") {
+    $cur.TryPauseAsync() | Out-Null
+} elseif ($Action -eq "PlayPause") {
     $cur.TryTogglePlayPauseAsync() | Out-Null
 } elseif ($Action -eq "Next") {
     $cur.TrySkipNextAsync() | Out-Null

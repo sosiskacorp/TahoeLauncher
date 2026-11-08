@@ -297,39 +297,78 @@ namespace MacOSTahoe
 
         public void PlayPause()
         {
-            // Immediate hardware media key
-            NativeMethods.keybd_event(0xB3, 0, 0, UIntPtr.Zero);
-            NativeMethods.keybd_event(0xB3, 0, 2, UIntPtr.Zero);
+            if (CurrentInfo.IsPlaying)
+            {
+                Pause();
+            }
+            else
+            {
+                Play();
+            }
+        }
 
-            CurrentInfo.IsPlaying = !CurrentInfo.IsPlaying;
+        public void Play()
+        {
+            CurrentInfo.IsPlaying = true;
             if (MediaUpdated != null) MediaUpdated();
 
-            // Background GSMTC sync
-            ExecuteActionAsync("PlayPause");
+            if (!CurrentInfo.HasActiveMedia)
+            {
+                NativeMethods.keybd_event(0xB3, 0, 0, UIntPtr.Zero);
+                NativeMethods.keybd_event(0xB3, 0, 2, UIntPtr.Zero);
+            }
+            else
+            {
+                ExecuteActionAsync("Play");
+            }
+        }
+
+        public void Pause()
+        {
+            CurrentInfo.IsPlaying = false;
+            if (MediaUpdated != null) MediaUpdated();
+
+            if (!CurrentInfo.HasActiveMedia)
+            {
+                NativeMethods.keybd_event(0xB3, 0, 0, UIntPtr.Zero);
+                NativeMethods.keybd_event(0xB3, 0, 2, UIntPtr.Zero);
+            }
+            else
+            {
+                ExecuteActionAsync("Pause");
+            }
         }
 
         public void NextTrack()
         {
-            // Immediate hardware media key
-            NativeMethods.keybd_event(0xB0, 0, 0, UIntPtr.Zero);
-            NativeMethods.keybd_event(0xB0, 0, 2, UIntPtr.Zero);
-
             CurrentInfo.PositionSeconds = 0;
             if (MediaUpdated != null) MediaUpdated();
 
-            ExecuteActionAsync("Next");
+            if (!CurrentInfo.HasActiveMedia)
+            {
+                NativeMethods.keybd_event(0xB0, 0, 0, UIntPtr.Zero);
+                NativeMethods.keybd_event(0xB0, 0, 2, UIntPtr.Zero);
+            }
+            else
+            {
+                ExecuteActionAsync("Next");
+            }
         }
 
         public void PreviousTrack()
         {
-            // Immediate hardware media key
-            NativeMethods.keybd_event(0xB1, 0, 0, UIntPtr.Zero);
-            NativeMethods.keybd_event(0xB1, 0, 2, UIntPtr.Zero);
-
             CurrentInfo.PositionSeconds = 0;
             if (MediaUpdated != null) MediaUpdated();
 
-            ExecuteActionAsync("Prev");
+            if (!CurrentInfo.HasActiveMedia)
+            {
+                NativeMethods.keybd_event(0xB1, 0, 0, UIntPtr.Zero);
+                NativeMethods.keybd_event(0xB1, 0, 2, UIntPtr.Zero);
+            }
+            else
+            {
+                ExecuteActionAsync("Prev");
+            }
         }
 
         private void ExecuteActionAsync(string act)
@@ -398,7 +437,11 @@ if (-not $cur) {
     exit
 }
 
-if ($Action -eq ""PlayPause"") {
+if ($Action -eq ""Play"") {
+    $cur.TryPlayAsync() | Out-Null
+} elseif ($Action -eq ""Pause"") {
+    $cur.TryPauseAsync() | Out-Null
+} elseif ($Action -eq ""PlayPause"") {
     $cur.TryTogglePlayPauseAsync() | Out-Null
 } elseif ($Action -eq ""Next"") {
     $cur.TrySkipNextAsync() | Out-Null

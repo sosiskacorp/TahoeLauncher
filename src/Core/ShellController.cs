@@ -1529,10 +1529,7 @@ namespace MacOSTahoe
                 IntPtr h = target.Windows[i].Hwnd;
                 if (NativeMethods.IsWindow(h))
                 {
-                    if (NativeMethods.IsIconic(h)) NativeMethods.ShowWindow(h, NativeMethods.SW_RESTORE);
-                    NativeMethods.ShowWindow(h, NativeMethods.SW_SHOW);
-                    NativeMethods.SetForegroundWindow(h);
-                    NativeMethods.SwitchToThisWindow(h, false);
+                    NativeMethods.ForceForegroundWindow(h);
                 }
             }
 
@@ -1581,10 +1578,7 @@ namespace MacOSTahoe
                 if (!merged.Contains(h)) merged.Add(h);
                 if (NativeMethods.IsWindow(h))
                 {
-                    if (NativeMethods.IsIconic(h)) NativeMethods.ShowWindow(h, NativeMethods.SW_RESTORE);
-                    NativeMethods.ShowWindow(h, NativeMethods.SW_SHOW);
-                    NativeMethods.SetForegroundWindow(h);
-                    NativeMethods.SwitchToThisWindow(h, false);
+                    NativeMethods.ForceForegroundWindow(h);
                 }
             }
 
@@ -2160,7 +2154,7 @@ namespace MacOSTahoe
                 if (NativeMethods.GetWindow(hWnd, 4) != IntPtr.Zero) return true;
 
                 StringBuilder sbTitle = new StringBuilder(256);
-                if (NativeMethods.GetWindowText(hWnd, sbTitle, sbTitle.Capacity) <= 0) return true;
+                NativeMethods.GetWindowText(hWnd, sbTitle, sbTitle.Capacity);
                 string winTitle = sbTitle.ToString();
 
                 StringBuilder sbClass = new StringBuilder(128);
@@ -2178,6 +2172,7 @@ namespace MacOSTahoe
                 {
                     Process p = Process.GetProcessById((int)pid);
                     string pn = p.ProcessName;
+                    if (string.IsNullOrEmpty(winTitle)) winTitle = pn;
                     if (string.Equals(pn, "seelen-ui", StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(pn, "TextInputHost", StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(pn, "SearchHost", StringComparison.OrdinalIgnoreCase) ||
@@ -2235,7 +2230,7 @@ namespace MacOSTahoe
                 return;
             }
 
-            if (item.ActiveHwnd != IntPtr.Zero && NativeMethods.IsWindowVisible(item.ActiveHwnd))
+            if (item.ActiveHwnd != IntPtr.Zero && NativeMethods.IsWindow(item.ActiveHwnd))
             {
                 IntPtr fg = NativeMethods.GetForegroundWindow();
                 if (fg == item.ActiveHwnd && !NativeMethods.IsIconic(item.ActiveHwnd))
@@ -2244,14 +2239,24 @@ namespace MacOSTahoe
                 }
                 else
                 {
-                    if (NativeMethods.IsIconic(item.ActiveHwnd))
-                    {
-                        NativeMethods.ShowWindow(item.ActiveHwnd, NativeMethods.SW_RESTORE);
-                    }
-                    NativeMethods.SwitchToThisWindow(item.ActiveHwnd, false);
-                    NativeMethods.SetForegroundWindow(item.ActiveHwnd);
+                    NativeMethods.ForceForegroundWindow(item.ActiveHwnd);
                 }
                 return;
+            }
+
+            // Fallback: check if application is already running and find its window
+            if (item.ProcessNames != null && item.ProcessNames.Length > 0)
+            {
+                for (int p = 0; p < item.ProcessNames.Length; p++)
+                {
+                    IntPtr foundWnd = FindProcessWindow(item.ProcessNames[p]);
+                    if (foundWnd != IntPtr.Zero)
+                    {
+                        item.ActiveHwnd = foundWnd;
+                        NativeMethods.ForceForegroundWindow(foundWnd);
+                        return;
+                    }
+                }
             }
 
             RunProcess(item.LaunchCommand, item.LaunchArgs);
@@ -2260,6 +2265,37 @@ namespace MacOSTahoe
         public static void RunProcess(string cmd, string args)
         {
             RunProcessEx(cmd, args, false);
+        }
+
+        public static IntPtr FindProcessWindow(string processName)
+        {
+            IntPtr found = IntPtr.Zero;
+            try
+            {
+                NativeMethods.EnumWindows(delegate(IntPtr hWnd, IntPtr lp)
+                {
+                    if (!NativeMethods.IsWindowVisible(hWnd)) return true;
+                    int exStyle = NativeMethods.GetWindowLong(hWnd, NativeMethods.GWL_EXSTYLE);
+                    if ((exStyle & NativeMethods.WS_EX_TOOLWINDOW) != 0) return true;
+                    if (NativeMethods.GetWindow(hWnd, 4) != IntPtr.Zero) return true;
+
+                    uint pid;
+                    NativeMethods.GetWindowThreadProcessId(hWnd, out pid);
+                    try
+                    {
+                        Process p = Process.GetProcessById((int)pid);
+                        if (string.Equals(p.ProcessName, processName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            found = hWnd;
+                            return false;
+                        }
+                    }
+                    catch { }
+                    return true;
+                }, IntPtr.Zero);
+            }
+            catch { }
+            return found;
         }
 
         public static void RunProcessEx(string cmd, string args, bool asAdmin)
