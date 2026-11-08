@@ -81,7 +81,25 @@ namespace MacOSTahoe
 
             _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(800) };
             _pollTimer.Tick += OnPollTick;
-            _pollTimer.Start();
+            if (ShellController.Instance != null && ShellController.Instance.Config.EnableStageManager)
+            {
+                _pollTimer.Start();
+            }
+        }
+
+        public void StartPoll()
+        {
+            if (_pollTimer == null)
+            {
+                _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(800) };
+                _pollTimer.Tick += OnPollTick;
+            }
+            if (!_pollTimer.IsEnabled) _pollTimer.Start();
+        }
+
+        public void StopPoll()
+        {
+            if (_pollTimer != null && _pollTimer.IsEnabled) _pollTimer.Stop();
         }
 
         public void UpdateDimensions()
@@ -227,6 +245,7 @@ namespace MacOSTahoe
         {
             if (ShellController.Instance == null || !ShellController.Instance.Config.EnableStageManager)
             {
+                StopPoll();
                 if (IsVisible) Hide();
                 return;
             }

@@ -226,17 +226,9 @@ namespace MacOSTahoe
             sp.Children.Add(CreateSectionHeader("Постановщик (Stage Manager)"));
             sp.Children.Add(CreateToggleRow("Включить Постановщик (Stage Manager)", "Упорядочивает открытые окна, удерживая активное по центру, а остальные слева", cfg.EnableStageManager, delegate(bool v)
             {
-                cfg.EnableStageManager = v;
-                ShellController.Instance.SaveConfig();
-                if (v)
+                if (ShellController.Instance.Config.EnableStageManager != v)
                 {
-                    if (ShellController.Instance.StageManager == null) ShellController.Instance.StageManager = new StageManagerWindow();
-                    ShellController.Instance.StageManager.RefreshShelf();
-                    ShellController.Instance.StageManager.Show();
-                }
-                else
-                {
-                    if (ShellController.Instance.StageManager != null) ShellController.Instance.StageManager.Hide();
+                    ShellController.Instance.ToggleStageManager();
                 }
             }));
             sp.Children.Add(CreateToggleRow("Скрывать боковую панель миниатюр", "Панель появляется только при подведении курсора к левому краю экрана", cfg.StageManagerAutoHide, delegate(bool v)

@@ -157,7 +157,7 @@ namespace MacOSTahoe
                                 {
                                     ShellController.Instance.CommitAppSwitcher();
                                 }));
-                                return (IntPtr)1;
+                                // DO NOT return (IntPtr)1! Let WM_KEYUP reach Windows so Alt key is never stuck!
                             }
                         }
                     }

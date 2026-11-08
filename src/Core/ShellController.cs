@@ -1355,6 +1355,7 @@ namespace MacOSTahoe
             SaveConfig();
             if (Config.EnableStageManager)
             {
+                StageManager.StartPoll();
                 StageManager.RefreshShelf();
                 StageManager.Show();
                 if (ActiveStageGroup != null && ActiveStageGroup.Windows.Count > 0 && Config.StageManagerAutoCenter)
@@ -1364,12 +1365,39 @@ namespace MacOSTahoe
             }
             else
             {
+                StageManager.StopPoll();
                 StageManager.Hide();
+                RestoreAllStageWindows();
             }
             if (ControlCenter != null && ControlCenter.IsVisible)
             {
                 ControlCenter.RefreshState();
             }
+        }
+
+        public void RestoreAllStageWindows()
+        {
+            try
+            {
+                IsStageDesktopRevealed = false;
+                ActiveStageGroup = null;
+                MergedStageWindows.Clear();
+
+                // Restore all open application windows that were docked/minimized by Stage Manager
+                List<OpenWindowEntry> openWins = GetOpenApplicationWindows();
+                for (int i = 0; i < openWins.Count; i++)
+                {
+                    IntPtr h = openWins[i].Hwnd;
+                    if (h != IntPtr.Zero && NativeMethods.IsWindow(h))
+                    {
+                        if (NativeMethods.IsIconic(h))
+                        {
+                            NativeMethods.ShowWindow(h, NativeMethods.SW_RESTORE);
+                        }
+                    }
+                }
+            }
+            catch { }
         }
 
         public List<StageGroup> RefreshStageGroups()
@@ -1607,27 +1635,35 @@ namespace MacOSTahoe
 
         public void CenterWindowOnStage(IntPtr hwnd)
         {
-            if (hwnd == IntPtr.Zero || !NativeMethods.IsWindow(hwnd)) return;
+            if (hwnd == IntPtr.Zero || !NativeMethods.IsWindow(hwnd) || !Config.EnableStageManager) return;
+            if (!Config.StageManagerAutoCenter) return;
+            if (NativeMethods.IsZoomed(hwnd)) return;
 
             double screenW = SystemParameters.PrimaryScreenWidth;
             double screenH = SystemParameters.PrimaryScreenHeight;
             double top = (Config.ShowTopBar && TopBar != null) ? 32.0 : 0.0;
             double dockH = (Config.ShowDock && !Config.DockAutoHide && Dock != null) ? 76.0 : 0.0;
-            double leftShelfW = (Config.EnableStageManager && !Config.StageManagerAutoHide) ? 148.0 : 0.0;
+            double leftShelfW = (!Config.StageManagerAutoHide) ? 148.0 : 0.0;
 
             double usableW = screenW - leftShelfW;
             double usableH = screenH - top - dockH;
 
-            int targetW = (int)(usableW * 0.78);
-            int targetH = (int)(usableH * 0.84);
-            int targetX = (int)(leftShelfW + (usableW - targetW) / 2.0);
-            int targetY = (int)(top + (usableH - targetH) / 2.0);
-
-            if (NativeMethods.IsZoomed(hwnd))
+            NativeMethods.RECT r;
+            if (NativeMethods.GetWindowRect(hwnd, out r))
             {
-                NativeMethods.ShowWindow(hwnd, NativeMethods.SW_RESTORE);
+                int currentW = r.Right - r.Left;
+                int currentH = r.Bottom - r.Top;
+
+                int targetW = Math.Min(currentW, (int)(usableW * 0.92));
+                int targetH = Math.Min(currentH, (int)(usableH * 0.94));
+                if (targetW < 400) targetW = (int)(usableW * 0.78);
+                if (targetH < 300) targetH = (int)(usableH * 0.84);
+
+                int targetX = (int)(leftShelfW + (usableW - targetW) / 2.0);
+                int targetY = (int)(top + (usableH - targetH) / 2.0);
+
+                NativeMethods.MoveWindow(hwnd, targetX, targetY, targetW, targetH, true);
             }
-            NativeMethods.MoveWindow(hwnd, targetX, targetY, targetW, targetH, true);
         }
 
         public void ShowAppSwitcher(bool backward)
@@ -1642,6 +1678,9 @@ namespace MacOSTahoe
             {
                 AppSwitcher.CommitSelection();
             }
+            NativeMethods.keybd_event(0x12, 0, 2, UIntPtr.Zero);
+            NativeMethods.keybd_event(0xA4, 0, 2, UIntPtr.Zero);
+            NativeMethods.keybd_event(0xA5, 0, 2, UIntPtr.Zero);
         }
 
         public void AppSwitcherQuit()

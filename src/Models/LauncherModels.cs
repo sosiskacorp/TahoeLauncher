@@ -97,7 +97,7 @@ namespace MacOSTahoe
             StageManagerAutoHide = false;
             StageManagerShowDesktopIcons = false;
             StageManagerGroupSameApp = true;
-            StageManagerAutoCenter = true;
+            StageManagerAutoCenter = false;
             Spaces = new List<string> { "Рабочий стол 1", "Рабочий стол 2" };
             CurrentSpaceIndex = 0;
             SpaceWallpapers = new List<string>();
