@@ -1,0 +1,9 @@
+# Local runtime configuration (auto-generated on first launch)
+config.json
+
+# Local shortcuts and helper scripts
+Desktop.lnk
+download_and_prep_icons.py
+*.bak
+*.log
+*.pdb
