@@ -32,6 +32,10 @@ namespace MacOSTahoe
     {
         private TextBlock _activeAppText;
         private TextBlock _clockText;
+        private Border _networkBtn;
+        private Border _networkIconHost;
+        private NetworkKind _lastNetworkKind = NetworkKind.Disconnected;
+        private int _networkPollCounter = 0;
         private TextBlock _langText;
         private TextBlock _cpuMemText;
         private Popup _activeMenuPopup;
@@ -584,20 +588,21 @@ namespace MacOSTahoe
             langBtn.ToolTip = "Переключить раскладку клавиатуры";
             rightStack.Children.Add(langBtn);
 
-            Border wifiBtn = CreateBarButton(CreateVectorIcon("M1,6 C5.5,2 12.5,2 17,6 M3.8,9.2 C7,6.4 11,6.4 14.2,9.2 M6.8,12.2 C8.2,11 9.8,11 11.2,12.2 M9,15 A1,1 0 1,1 9.01,15", 16, 15, true),
-                delegate(object s, MouseButtonEventArgs e)
-                {
-                    ShellController.Instance.ToggleControlCenter();
-                });
-            wifiBtn.ToolTip = "Сеть и Интернет";
-            rightStack.Children.Add(wifiBtn);
+            _networkIconHost = new Border();
+            _networkBtn = CreateBarButton(_networkIconHost, delegate(object s, MouseButtonEventArgs e)
+            {
+                ShellController.Instance.ToggleNetworkMenu();
+            });
+            _networkBtn.ToolTip = "Сеть и Интернет";
+            UpdateNetworkIcon();
+            rightStack.Children.Add(_networkBtn);
 
             Border soundBtn = CreateBarButton(CreateVectorIcon("M2,6 L5,6 L9,2.5 L9,13.5 L5,10 L2,10 Z M11.5,5 C12.8,6.5 12.8,9.5 11.5,11 M13.8,3 C16,5.8 16,10.2 13.8,13", 16, 15, true),
                 delegate(object s, MouseButtonEventArgs e)
                 {
-                    ShellController.Instance.ToggleControlCenter();
+                    ShellController.Instance.ToggleSoundMenu();
                 });
-            soundBtn.ToolTip = "Звук и мультимедиа";
+            soundBtn.ToolTip = "Звук и аудиоустройства";
             rightStack.Children.Add(soundBtn);
 
             Border bgTasksBtn = CreateBarButton(CreateVectorIcon("M3,9.5 L7.5,5 L12,9.5", 15, 14, true),
@@ -1083,6 +1088,44 @@ namespace MacOSTahoe
             }
         }
 
+
+        private void UpdateNetworkIcon()
+        {
+            NetworkStatusInfo info = NetworkHelper.GetCurrentStatus();
+            if (info.Kind != _lastNetworkKind || _networkIconHost.Child == null)
+            {
+                _lastNetworkKind = info.Kind;
+                if (_networkIconHost != null)
+                {
+                    if (info.Kind == NetworkKind.Ethernet)
+                    {
+                        // Ethernet LAN monitor/cable icon
+                        _networkIconHost.Child = CreateVectorIcon(
+                            "M2,3 C2,2.4 2.4,2 3,2 L13,2 C13.6,2 14,2.4 14,3 L14,10 C14,10.6 13.6,11 13,11 L10,11 L10,12.5 L12,12.5 L12,14 L4,14 L4,12.5 L6,12.5 L6,11 L3,11 C2.4,11 2,10.6 2,10 Z M3.5,3.5 L3.5,9.5 L12.5,9.5 L12.5,3.5 Z M5,5 L6.5,5 L6.5,8 L5,8 Z M7.2,5 L8.7,5 L8.7,8 L7.2,8 Z M9.5,5 L11,5 L11,8 L9.5,8 Z",
+                            16, 15, true);
+                    }
+                    else if (info.Kind == NetworkKind.WiFi)
+                    {
+                        // Wi-Fi 3 arcs icon
+                        _networkIconHost.Child = CreateVectorIcon(
+                            "M1,6 C5.5,2 12.5,2 17,6 M3.8,9.2 C7,6.4 11,6.4 14.2,9.2 M6.8,12.2 C8.2,11 9.8,11 11.2,12.2 M9,15 A1,1 0 1,1 9.01,15",
+                            16, 15, true);
+                    }
+                    else
+                    {
+                        // Disconnected
+                        _networkIconHost.Child = CreateVectorIcon(
+                            "M2,14 L14,2 M1,6 C5.5,2 12.5,2 17,6 M9,15 A1,1 0 1,1 9.01,15",
+                            16, 15, true);
+                    }
+                }
+            }
+            if (_networkBtn != null)
+            {
+                _networkBtn.ToolTip = info.ConnectionTitle;
+            }
+        }
+
         private void OnPollTick(object sender, EventArgs e)
         {
             NativeMethods.POINT curPt;
@@ -1090,6 +1133,12 @@ namespace MacOSTahoe
             {
                 ShellController.Instance.CheckHotCorners(curPt.X, curPt.Y);
             }
+            _networkPollCounter++;
+            if (_networkPollCounter % 4 == 0)
+            {
+                UpdateNetworkIcon();
+            }
+
             if (_appBarRegistered && ShellController.Instance.Config.ShowTopBar && SystemParameters.WorkArea.Top < 26)
             {
                 EnforceWorkArea();

@@ -426,9 +426,13 @@ namespace MacOSTahoe
             if (string.Equals(exeName, "deluge", StringComparison.OrdinalIgnoreCase)) return "Deluge Torrent";
             if (string.Equals(exeName, "Creative Cloud", StringComparison.OrdinalIgnoreCase)) return "Adobe Creative Cloud";
 
-            // If tip has a clean title, use it
-            if (!string.IsNullOrEmpty(tip) && tip.Length >= 2 && !tip.Contains("?") && !tip.Contains(""))
+            // Clean up InitialTooltip if available and not a raw resource string
+            if (!string.IsNullOrEmpty(tip) && tip.Length >= 2 && !tip.StartsWith("@") && !tip.Contains("\n") && !tip.Contains("\r") && !tip.Contains("?"))
             {
+                int dashIdx = tip.IndexOf(" — ");
+                if (dashIdx > 2) return tip.Substring(0, dashIdx).Trim();
+                int hyphenIdx = tip.IndexOf(" - ");
+                if (hyphenIdx > 2) return tip.Substring(0, hyphenIdx).Trim();
                 return tip.Trim();
             }
 
@@ -438,7 +442,7 @@ namespace MacOSTahoe
                 try
                 {
                     FileVersionInfo vi = FileVersionInfo.GetVersionInfo(exePath);
-                    if (!string.IsNullOrEmpty(vi.FileDescription) && !vi.FileDescription.Contains("?") && !vi.FileDescription.Contains(""))
+                    if (!string.IsNullOrEmpty(vi.FileDescription) && !vi.FileDescription.Contains("?"))
                     {
                         return vi.FileDescription.Trim();
                     }

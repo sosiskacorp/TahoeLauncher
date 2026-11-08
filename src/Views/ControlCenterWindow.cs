@@ -43,6 +43,16 @@ namespace MacOSTahoe
         private TranslateTransform _translateTransform;
         private Border _card;
         private bool _isClosing = false;
+        private TextBlock _ccMediaSource;
+        private TextBlock _ccMediaStatus;
+        private TextBlock _ccCoverIcon;
+        private TextBlock _ccTrackTitle;
+        private TextBlock _ccTrackArtist;
+        private TextBlock _ccTimeElapsed;
+        private TextBlock _ccTimeTotal;
+        private ProgressBar _ccProgressBar;
+        private Border _ccPlayPauseChip;
+        private TextBlock _connWifiSub;
 
         public ControlCenterWindow()
         {
@@ -62,6 +72,11 @@ namespace MacOSTahoe
             Deactivated += delegate(object s, EventArgs e)
             {
                 if (!_isClosing && IsVisible) HideAnimated();
+            };
+
+            NowPlayingManager.Instance.MediaUpdated += delegate
+            {
+                if (IsVisible) Dispatcher.BeginInvoke(new Action(UpdateMiniplayerUI));
             };
         }
 
@@ -95,7 +110,9 @@ namespace MacOSTahoe
             Border connCard = CreateGlassTile();
             connCard.Padding = new Thickness(12, 10, 12, 10);
             StackPanel connStack = new StackPanel();
-            connStack.Children.Add(CreateConnRow("Wi-Fi", "Подключено", true, delegate() { ShellController.RunProcess("explorer.exe", "ms-settings:network-wifi"); }));
+            Border wifiRow = (Border)CreateConnRow("Сеть", "Подключено", true, delegate() { ShellController.Instance.ToggleNetworkMenu(); });
+            _connWifiSub = ((StackPanel)((StackPanel)wifiRow.Child).Children[1]).Children[1] as TextBlock;
+            connStack.Children.Add(wifiRow);
             connStack.Children.Add(CreateConnRow("Bluetooth", "Вкл.", true, delegate() { ShellController.RunProcess("explorer.exe", "ms-settings:bluetooth"); }));
             connStack.Children.Add(CreateConnRow("Лаунчер", "Настройки", true, delegate() { Hide(); ShellController.Instance.ShowLauncherSettings(); }));
             connCard.Child = connStack;
@@ -150,7 +167,7 @@ namespace MacOSTahoe
             root.Children.Add(_stageManagerTile);
 
             TextBlock bgSub;
-            Border bgTasksTile = CreateActionTile("Р¤РѕРЅРѕРІС‹Рµ Р·Р°РґР°С‡Рё", "РўСЂРµР№ Рё РїСЂРѕС†РµСЃСЃС‹ (Win+B)", true, out bgSub, delegate()
+            Border bgTasksTile = CreateActionTile("Фоновые задачи", "Трей и процессы (Win+B)", true, out bgSub, delegate()
             {
                 Hide();
                 ShellController.Instance.ToggleBackgroundTasks();
@@ -186,28 +203,124 @@ namespace MacOSTahoe
             dispCard.Child = dispStack;
             root.Children.Add(dispCard);
 
-            Border soundCard = CreateGlassTile();
-            soundCard.Margin = new Thickness(0, 10, 0, 0);
-            soundCard.Padding = new Thickness(12, 10, 12, 10);
-            StackPanel soundStack = new StackPanel();
-            soundStack.Children.Add(new TextBlock
+            // --- NOW PLAYING MINIPLAYER ---
+            Border mediaCard = CreateGlassTile();
+            mediaCard.Margin = new Thickness(0, 10, 0, 0);
+            mediaCard.Padding = new Thickness(12, 10, 12, 10);
+
+            StackPanel mediaStack = new StackPanel();
+
+            // Header: source & status
+            Grid mediaHeader = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+            mediaHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            mediaHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            _ccMediaSource = new TextBlock
             {
-                Text = "Звук и мультимедиа",
-                FontSize = 12,
+                Text = "🎵 Яндекс Музыка",
+                FontSize = 11,
+                FontWeight = FontWeights.Bold,
+                Foreground = LiquidGlassTheme.AccentBlueBrush
+            };
+            Grid.SetColumn(_ccMediaSource, 0);
+            mediaHeader.Children.Add(_ccMediaSource);
+
+            _ccMediaStatus = new TextBlock
+            {
+                Text = "Сейчас играет",
+                FontSize = 10,
+                Foreground = new SolidColorBrush(Color.FromArgb(160, 235, 235, 245))
+            };
+            Grid.SetColumn(_ccMediaStatus, 1);
+            mediaHeader.Children.Add(_ccMediaStatus);
+            mediaStack.Children.Add(mediaHeader);
+
+            // Track & Artist with Cover art
+            Grid trackRow = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+            trackRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(46) });
+            trackRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            Border coverBorder = new Border
+            {
+                Width = 40,
+                Height = 40,
+                CornerRadius = new CornerRadius(10),
+                Background = new SolidColorBrush(Color.FromArgb(50, 255, 255, 255)),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            _ccCoverIcon = new TextBlock
+            {
+                Text = "🎵",
+                FontSize = 20,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            coverBorder.Child = _ccCoverIcon;
+            Grid.SetColumn(coverBorder, 0);
+            trackRow.Children.Add(coverBorder);
+
+            StackPanel trackInfo = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 0, 0) };
+            _ccTrackTitle = new TextBlock
+            {
+                Text = "Музыка не играет",
+                FontSize = 12.5,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Brushes.White,
-                Margin = new Thickness(0, 0, 0, 6)
-            });
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            _ccTrackArtist = new TextBlock
+            {
+                Text = "Запустите Яндекс Музыку",
+                FontSize = 10.5,
+                Foreground = new SolidColorBrush(Color.FromArgb(180, 235, 235, 245)),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Margin = new Thickness(0, 2, 0, 0)
+            };
+            trackInfo.Children.Add(_ccTrackTitle);
+            trackInfo.Children.Add(_ccTrackArtist);
+            Grid.SetColumn(trackInfo, 1);
+            trackRow.Children.Add(trackInfo);
+            mediaStack.Children.Add(trackRow);
 
-            StackPanel mediaBtns = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
-            mediaBtns.Children.Add(CreateMediaChip("⏮", delegate() { NativeMethods.keybd_event(0xB1, 0, 0, UIntPtr.Zero); }));
-            mediaBtns.Children.Add(CreateMediaChip("⏯ Пауза/Пуск", delegate() { NativeMethods.keybd_event(0xB3, 0, 0, UIntPtr.Zero); }));
-            mediaBtns.Children.Add(CreateMediaChip("⏭", delegate() { NativeMethods.keybd_event(0xB0, 0, 0, UIntPtr.Zero); }));
-            mediaBtns.Children.Add(CreateMediaChip("🔊-", delegate() { NativeMethods.keybd_event(0xAE, 0, 0, UIntPtr.Zero); }));
-            mediaBtns.Children.Add(CreateMediaChip("🔊+", delegate() { NativeMethods.keybd_event(0xAF, 0, 0, UIntPtr.Zero); }));
-            soundStack.Children.Add(mediaBtns);
-            soundCard.Child = soundStack;
-            root.Children.Add(soundCard);
+            // Timeline Scrubber
+            Grid timelineGrid = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+            timelineGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            timelineGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            timelineGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            _ccTimeElapsed = new TextBlock { Text = "00:00", FontSize = 9.5, Foreground = new SolidColorBrush(Color.FromArgb(160, 235, 235, 245)) };
+            Grid.SetColumn(_ccTimeElapsed, 0);
+            timelineGrid.Children.Add(_ccTimeElapsed);
+
+            _ccProgressBar = new ProgressBar
+            {
+                Height = 4,
+                Minimum = 0,
+                Maximum = 210,
+                Value = 42,
+                Margin = new Thickness(6, 0, 6, 0),
+                Foreground = LiquidGlassTheme.AccentBlueBrush,
+                Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
+                BorderThickness = new Thickness(0)
+            };
+            Grid.SetColumn(_ccProgressBar, 1);
+            timelineGrid.Children.Add(_ccProgressBar);
+
+            _ccTimeTotal = new TextBlock { Text = "03:30", FontSize = 9.5, Foreground = new SolidColorBrush(Color.FromArgb(160, 235, 235, 245)) };
+            Grid.SetColumn(_ccTimeTotal, 2);
+            timelineGrid.Children.Add(_ccTimeTotal);
+            mediaStack.Children.Add(timelineGrid);
+
+            // Playback controls row
+            StackPanel controls = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+            controls.Children.Add(CreateMediaChip("⏮", delegate() { NowPlayingManager.Instance.PreviousTrack(); }));
+            _ccPlayPauseChip = CreateMediaChip("⏯ Пауза/Пуск", delegate() { NowPlayingManager.Instance.PlayPause(); });
+            controls.Children.Add(_ccPlayPauseChip);
+            controls.Children.Add(CreateMediaChip("⏭", delegate() { NowPlayingManager.Instance.NextTrack(); }));
+            mediaStack.Children.Add(controls);
+
+            mediaCard.Child = mediaStack;
+            root.Children.Add(mediaCard);
 
             card.Child = root;
             Content = card;
@@ -316,6 +429,32 @@ namespace MacOSTahoe
             });
         }
 
+
+        private void UpdateMiniplayerUI()
+        {
+            NowPlayingInfo info = NowPlayingManager.Instance.CurrentInfo;
+            if (info != null)
+            {
+                if (_ccMediaSource != null) _ccMediaSource.Text = "🎵 " + info.SourceApp;
+                if (_ccTrackTitle != null) _ccTrackTitle.Text = info.Title;
+                if (_ccTrackArtist != null) _ccTrackArtist.Text = info.Artist;
+                if (_ccPlayPauseChip != null && _ccPlayPauseChip.Child is TextBlock)
+                {
+                    ((TextBlock)_ccPlayPauseChip.Child).Text = info.IsPlaying ? "⏸ Пауза" : "▶ Пуск";
+                }
+
+                if (_ccProgressBar != null && _ccTimeElapsed != null && _ccTimeTotal != null)
+                {
+                    int pos = info.PositionSeconds;
+                    int dur = Math.Max(1, info.DurationSeconds);
+                    _ccProgressBar.Maximum = dur;
+                    _ccProgressBar.Value = Math.Min(pos, dur);
+                    _ccTimeElapsed.Text = string.Format("{0:D2}:{1:D2}", pos / 60, pos % 60);
+                    _ccTimeTotal.Text = string.Format("{0:D2}:{1:D2}", dur / 60, dur % 60);
+                }
+            }
+        }
+
         public void RefreshState()
         {
             bool dark = ShellController.Instance.IsDarkMode;
@@ -350,6 +489,14 @@ namespace MacOSTahoe
                     ? new SolidColorBrush(Color.FromArgb(115, 10, 132, 255))
                     : new SolidColorBrush(Color.FromArgb(46, 255, 255, 255));
             }
+
+            NetworkStatusInfo net = NetworkHelper.GetCurrentStatus();
+            if (_connWifiSub != null)
+            {
+                _connWifiSub.Text = net.IsConnected ? (net.Kind == NetworkKind.Ethernet ? "Ethernet • Подключено" : "Wi-Fi • Подключено") : "Отключено";
+            }
+
+            UpdateMiniplayerUI();
         }
     }
 

@@ -47,6 +47,8 @@ namespace MacOSTahoe
         public LauncherSettingsWindow SettingsHub;
         public ControlCenterWindow ControlCenter;
         public CalendarWidgetWindow CalendarPopup;
+        public NetworkMenuWindow NetworkMenu;
+        public SoundMenuWindow SoundMenu;
         public AboutSystemWindow AboutWindow;
         public Window ScreenDimOverlay;
         public StageManagerWindow StageManager;
@@ -1300,6 +1302,8 @@ namespace MacOSTahoe
         {
             if (ControlCenter != null && ControlCenter.IsVisible) ControlCenter.HideAnimated();
             if (CalendarPopup != null && CalendarPopup.IsVisible) CalendarPopup.HideAnimated();
+            if (NetworkMenu != null && NetworkMenu.IsVisible) NetworkMenu.HideAnimated();
+            if (SoundMenu != null && SoundMenu.IsVisible) SoundMenu.HideAnimated();
             if (Spotlight != null && Spotlight.IsVisible) Spotlight.HideAnimated();
             if (Launchpad != null && Launchpad.IsVisible) Launchpad.HideWithAnimation();
             if (WindowSwitcher != null && WindowSwitcher.IsVisible) WindowSwitcher.HideAnimated();
@@ -1996,6 +2000,35 @@ namespace MacOSTahoe
             {
                 CloseAllPopups();
                 BackgroundTasks.ShowAnimated();
+            }
+        }
+
+
+        public void ToggleNetworkMenu()
+        {
+            if (NetworkMenu == null) NetworkMenu = new NetworkMenuWindow();
+            if (NetworkMenu.IsVisible)
+            {
+                NetworkMenu.HideAnimated();
+            }
+            else
+            {
+                CloseAllPopups();
+                NetworkMenu.ShowAnimated();
+            }
+        }
+
+        public void ToggleSoundMenu()
+        {
+            if (SoundMenu == null) SoundMenu = new SoundMenuWindow();
+            if (SoundMenu.IsVisible)
+            {
+                SoundMenu.HideAnimated();
+            }
+            else
+            {
+                CloseAllPopups();
+                SoundMenu.ShowAnimated();
             }
         }
 

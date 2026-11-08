@@ -27,6 +27,8 @@ $cscArgs = @(
     '/nologo',
     '/target:winexe',
     '/optimize+',
+    '/codepage:65001',
+    '/utf8output',
     "/out:$outExe",
     "/r:$wpfDir\PresentationCore.dll",
     "/r:$wpfDir\PresentationFramework.dll",
