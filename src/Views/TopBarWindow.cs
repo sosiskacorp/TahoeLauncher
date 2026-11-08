@@ -212,6 +212,20 @@ namespace MacOSTahoe
                             }
                         }
 
+                        // Hotkey: Alt + ~ (Tilde/Ё) -> step backwards in App Switcher HUD
+                        if (vkCode == 0xC0)
+                        {
+                            bool isAltDown = ((NativeMethods.GetAsyncKeyState(0x12) & 0x8000) != 0) || ((NativeMethods.GetAsyncKeyState(0xA4) & 0x8000) != 0) || ((NativeMethods.GetAsyncKeyState(0xA5) & 0x8000) != 0);
+                            if (isAltDown)
+                            {
+                                Dispatcher.BeginInvoke(new Action(delegate
+                                {
+                                    ShellController.Instance.ShowAppSwitcher(true);
+                                }));
+                                return (IntPtr)1;
+                            }
+                        }
+
                         // When App Switcher HUD is open: Q quits, H hides, Esc cancels
                         if (ShellController.Instance.AppSwitcher != null && ShellController.Instance.AppSwitcher.IsVisible)
                         {

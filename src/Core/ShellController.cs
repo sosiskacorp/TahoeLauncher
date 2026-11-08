@@ -52,6 +52,10 @@ namespace MacOSTahoe
         public StageManagerWindow StageManager;
         public AppSwitcherWindow AppSwitcher;
         public SplitViewDividerWindow SplitViewDivider;
+        public List<StageGroup> CurrentStageGroups = new List<StageGroup>();
+        public StageGroup ActiveStageGroup = null;
+        public List<List<IntPtr>> MergedStageWindows = new List<List<IntPtr>>();
+        public bool IsStageDesktopRevealed = false;
 
         public ImageSource DefaultAppIcon
         {
@@ -1350,6 +1354,10 @@ namespace MacOSTahoe
             {
                 StageManager.RefreshShelf();
                 StageManager.Show();
+                if (ActiveStageGroup != null && ActiveStageGroup.Windows.Count > 0 && Config.StageManagerAutoCenter)
+                {
+                    CenterWindowOnStage(ActiveStageGroup.Windows[0].Hwnd);
+                }
             }
             else
             {
@@ -1359,6 +1367,264 @@ namespace MacOSTahoe
             {
                 ControlCenter.RefreshState();
             }
+        }
+
+        public List<StageGroup> RefreshStageGroups()
+        {
+            List<OpenWindowEntry> openWins = GetOpenApplicationWindows();
+            List<StageGroup> groups = new List<StageGroup>();
+
+            for (int i = MergedStageWindows.Count - 1; i >= 0; i--)
+            {
+                List<IntPtr> list = MergedStageWindows[i];
+                for (int j = list.Count - 1; j >= 0; j--)
+                {
+                    if (!NativeMethods.IsWindow(list[j])) list.RemoveAt(j);
+                }
+                if (list.Count <= 1) MergedStageWindows.RemoveAt(i);
+            }
+
+            HashSet<IntPtr> processed = new HashSet<IntPtr>();
+
+            for (int i = 0; i < MergedStageWindows.Count; i++)
+            {
+                List<IntPtr> list = MergedStageWindows[i];
+                StageGroup g = new StageGroup();
+                g.Id = "merged_" + i.ToString();
+                for (int j = 0; j < openWins.Count; j++)
+                {
+                    if (list.Contains(openWins[j].Hwnd))
+                    {
+                        g.Windows.Add(openWins[j]);
+                        processed.Add(openWins[j].Hwnd);
+                    }
+                }
+                if (g.Windows.Count > 0)
+                {
+                    g.Title = g.Windows[0].AppTitle;
+                    g.ProcessName = g.Windows[0].ProcessName;
+                    g.Icon = g.Windows[0].Icon != null ? g.Windows[0].Icon : DefaultAppIcon;
+                    groups.Add(g);
+                }
+            }
+
+            if (Config.StageManagerGroupSameApp)
+            {
+                Dictionary<string, StageGroup> byApp = new Dictionary<string, StageGroup>(StringComparer.OrdinalIgnoreCase);
+                for (int i = 0; i < openWins.Count; i++)
+                {
+                    OpenWindowEntry w = openWins[i];
+                    if (processed.Contains(w.Hwnd)) continue;
+
+                    string key = !string.IsNullOrEmpty(w.ProcessName) ? w.ProcessName : w.AppTitle;
+                    StageGroup g;
+                    if (!byApp.TryGetValue(key, out g))
+                    {
+                        g = new StageGroup();
+                        g.Id = "app_" + key;
+                        g.Title = w.AppTitle;
+                        g.ProcessName = w.ProcessName;
+                        g.Icon = w.Icon != null ? w.Icon : DefaultAppIcon;
+                        byApp[key] = g;
+                        groups.Add(g);
+                    }
+                    g.Windows.Add(w);
+                    processed.Add(w.Hwnd);
+                }
+            }
+            else
+            {
+                for (int i = 0; i < openWins.Count; i++)
+                {
+                    OpenWindowEntry w = openWins[i];
+                    if (processed.Contains(w.Hwnd)) continue;
+
+                    StageGroup g = new StageGroup();
+                    g.Id = "win_" + w.Hwnd.ToString();
+                    g.Title = w.AppTitle;
+                    g.ProcessName = w.ProcessName;
+                    g.Icon = w.Icon != null ? w.Icon : DefaultAppIcon;
+                    g.Windows.Add(w);
+                    groups.Add(g);
+                    processed.Add(w.Hwnd);
+                }
+            }
+
+            IntPtr fg = NativeMethods.GetForegroundWindow();
+            ActiveStageGroup = null;
+            for (int i = 0; i < groups.Count; i++)
+            {
+                if (groups[i].HasHwnd(fg))
+                {
+                    ActiveStageGroup = groups[i];
+                    break;
+                }
+            }
+
+            CurrentStageGroups = groups;
+            return groups;
+        }
+
+        public void SwitchToStageGroup(StageGroup target)
+        {
+            if (target == null) return;
+            IsStageDesktopRevealed = false;
+
+            for (int i = 0; i < CurrentStageGroups.Count; i++)
+            {
+                StageGroup other = CurrentStageGroups[i];
+                if (other != target)
+                {
+                    for (int j = 0; j < other.Windows.Count; j++)
+                    {
+                        IntPtr h = other.Windows[j].Hwnd;
+                        if (!target.HasHwnd(h) && NativeMethods.IsWindow(h))
+                        {
+                            NativeMethods.ShowWindow(h, NativeMethods.SW_SHOWMINIMIZED);
+                        }
+                    }
+                }
+            }
+
+            for (int i = 0; i < target.Windows.Count; i++)
+            {
+                IntPtr h = target.Windows[i].Hwnd;
+                if (NativeMethods.IsWindow(h))
+                {
+                    if (NativeMethods.IsIconic(h)) NativeMethods.ShowWindow(h, NativeMethods.SW_RESTORE);
+                    NativeMethods.ShowWindow(h, NativeMethods.SW_SHOW);
+                    NativeMethods.SetForegroundWindow(h);
+                    NativeMethods.SwitchToThisWindow(h, true);
+                }
+            }
+
+            if (Config.StageManagerAutoCenter && target.Windows.Count == 1)
+            {
+                CenterWindowOnStage(target.Windows[0].Hwnd);
+            }
+
+            ActiveStageGroup = target;
+            if (StageManager != null) StageManager.RefreshShelf();
+        }
+
+        public void AddGroupToActiveStage(StageGroup group)
+        {
+            if (group == null) return;
+            IsStageDesktopRevealed = false;
+
+            if (ActiveStageGroup == null || ActiveStageGroup.Windows.Count == 0)
+            {
+                SwitchToStageGroup(group);
+                return;
+            }
+
+            List<IntPtr> merged = null;
+            for (int i = 0; i < MergedStageWindows.Count; i++)
+            {
+                if (MergedStageWindows[i].Contains(ActiveStageGroup.Windows[0].Hwnd))
+                {
+                    merged = MergedStageWindows[i];
+                    break;
+                }
+            }
+            if (merged == null)
+            {
+                merged = new List<IntPtr>();
+                for (int i = 0; i < ActiveStageGroup.Windows.Count; i++)
+                {
+                    merged.Add(ActiveStageGroup.Windows[i].Hwnd);
+                }
+                MergedStageWindows.Add(merged);
+            }
+
+            for (int i = 0; i < group.Windows.Count; i++)
+            {
+                IntPtr h = group.Windows[i].Hwnd;
+                if (!merged.Contains(h)) merged.Add(h);
+                if (NativeMethods.IsWindow(h))
+                {
+                    if (NativeMethods.IsIconic(h)) NativeMethods.ShowWindow(h, NativeMethods.SW_RESTORE);
+                    NativeMethods.ShowWindow(h, NativeMethods.SW_SHOW);
+                    NativeMethods.SetForegroundWindow(h);
+                    NativeMethods.SwitchToThisWindow(h, true);
+                }
+            }
+
+            RefreshStageGroups();
+            if (StageManager != null) StageManager.RefreshShelf();
+        }
+
+        public void CycleStageGroupWindows(StageGroup group)
+        {
+            if (group == null || group.Windows.Count <= 1) return;
+            OpenWindowEntry first = group.Windows[0];
+            group.Windows.RemoveAt(0);
+            group.Windows.Add(first);
+
+            IntPtr topHwnd = group.Windows[0].Hwnd;
+            if (NativeMethods.IsWindow(topHwnd))
+            {
+                if (NativeMethods.IsIconic(topHwnd)) NativeMethods.ShowWindow(topHwnd, NativeMethods.SW_RESTORE);
+                NativeMethods.SetForegroundWindow(topHwnd);
+                NativeMethods.SwitchToThisWindow(topHwnd, true);
+            }
+            if (StageManager != null) StageManager.RefreshShelf();
+        }
+
+        public void HideActiveStageToDesktop()
+        {
+            if (ActiveStageGroup == null) return;
+            IsStageDesktopRevealed = !IsStageDesktopRevealed;
+
+            if (IsStageDesktopRevealed)
+            {
+                for (int i = 0; i < ActiveStageGroup.Windows.Count; i++)
+                {
+                    IntPtr h = ActiveStageGroup.Windows[i].Hwnd;
+                    if (NativeMethods.IsWindow(h))
+                    {
+                        NativeMethods.ShowWindow(h, NativeMethods.SW_SHOWMINIMIZED);
+                    }
+                }
+            }
+            else
+            {
+                for (int i = 0; i < ActiveStageGroup.Windows.Count; i++)
+                {
+                    IntPtr h = ActiveStageGroup.Windows[i].Hwnd;
+                    if (NativeMethods.IsWindow(h))
+                    {
+                        NativeMethods.ShowWindow(h, NativeMethods.SW_RESTORE);
+                        NativeMethods.SetForegroundWindow(h);
+                    }
+                }
+            }
+            if (StageManager != null) StageManager.RefreshShelf();
+        }
+
+        public void CenterWindowOnStage(IntPtr hwnd)
+        {
+            if (hwnd == IntPtr.Zero || !NativeMethods.IsWindow(hwnd)) return;
+
+            double screenW = SystemParameters.PrimaryScreenWidth;
+            double screenH = SystemParameters.PrimaryScreenHeight;
+            double top = (Config.ShowTopBar && TopBar != null) ? 32.0 : 0.0;
+            double dockH = (Config.ShowDock && !Config.DockAutoHide && Dock != null) ? 76.0 : 0.0;
+            double leftShelfW = (Config.EnableStageManager && !Config.StageManagerAutoHide) ? 148.0 : 0.0;
+
+            double usableW = screenW - leftShelfW;
+            double usableH = screenH - top - dockH;
+
+            int targetW = (int)(usableW * 0.78);
+            int targetH = (int)(usableH * 0.84);
+            int targetX = (int)(leftShelfW + (usableW - targetW) / 2.0);
+            int targetY = (int)(top + (usableH - targetH) / 2.0);
+
+            if (NativeMethods.IsZoomed(hwnd))
+            {
+                NativeMethods.ShowWindow(hwnd, NativeMethods.SW_RESTORE);
+            }
+            NativeMethods.MoveWindow(hwnd, targetX, targetY, targetW, targetH, true);
         }
 
         public void ShowAppSwitcher(bool backward)

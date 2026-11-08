@@ -62,6 +62,10 @@ namespace MacOSTahoe
         public bool InterceptWinKey { get; set; }
         public bool IsDarkMode { get; set; }
         public bool EnableStageManager { get; set; }
+        public bool StageManagerAutoHide { get; set; }
+        public bool StageManagerShowDesktopIcons { get; set; }
+        public bool StageManagerGroupSameApp { get; set; }
+        public bool StageManagerAutoCenter { get; set; }
         public List<string> Spaces { get; set; }
         public int CurrentSpaceIndex { get; set; }
         public double DockIconSize { get; set; }
@@ -82,6 +86,10 @@ namespace MacOSTahoe
             InterceptWinKey = true;
             IsDarkMode = true;
             EnableStageManager = false;
+            StageManagerAutoHide = false;
+            StageManagerShowDesktopIcons = false;
+            StageManagerGroupSameApp = true;
+            StageManagerAutoCenter = true;
             Spaces = new List<string> { "Рабочий стол 1", "Рабочий стол 2" };
             CurrentSpaceIndex = 0;
             DockIconSize = 50.0;
@@ -151,4 +159,28 @@ namespace MacOSTahoe
     // =========================================================================
     // CORE SHELL & LAUNCHER CONTROLLER
     // =========================================================================
+
+    public class StageGroup
+    {
+        public string Id { get; set; }
+        public string Title { get; set; }
+        public string ProcessName { get; set; }
+        public List<OpenWindowEntry> Windows { get; set; }
+        public ImageSource Icon { get; set; }
+
+        public StageGroup()
+        {
+            Windows = new List<OpenWindowEntry>();
+        }
+
+        public bool HasHwnd(IntPtr hwnd)
+        {
+            if (Windows == null) return false;
+            for (int i = 0; i < Windows.Count; i++)
+            {
+                if (Windows[i].Hwnd == hwnd) return true;
+            }
+            return false;
+        }
+    }
 }

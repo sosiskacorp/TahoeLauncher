@@ -223,6 +223,40 @@ namespace MacOSTahoe
                 ShellController.Instance.SetAutostartEnabled(v);
             }));
 
+            sp.Children.Add(CreateSectionHeader("Постановщик (Stage Manager)"));
+            sp.Children.Add(CreateToggleRow("Включить Постановщик (Stage Manager)", "Упорядочивает открытые окна, удерживая активное по центру, а остальные слева", cfg.EnableStageManager, delegate(bool v)
+            {
+                cfg.EnableStageManager = v;
+                ShellController.Instance.SaveConfig();
+                if (v)
+                {
+                    if (ShellController.Instance.StageManager == null) ShellController.Instance.StageManager = new StageManagerWindow();
+                    ShellController.Instance.StageManager.RefreshShelf();
+                    ShellController.Instance.StageManager.Show();
+                }
+                else
+                {
+                    if (ShellController.Instance.StageManager != null) ShellController.Instance.StageManager.Hide();
+                }
+            }));
+            sp.Children.Add(CreateToggleRow("Скрывать боковую панель миниатюр", "Панель появляется только при подведении курсора к левому краю экрана", cfg.StageManagerAutoHide, delegate(bool v)
+            {
+                cfg.StageManagerAutoHide = v;
+                ShellController.Instance.SaveConfig();
+                if (ShellController.Instance.StageManager != null) ShellController.Instance.StageManager.ApplyAutoHideSetting();
+            }));
+            sp.Children.Add(CreateToggleRow("Группировать окна одного приложения", "Собирает несколько окон одной программы в аккуратную стопку", cfg.StageManagerGroupSameApp, delegate(bool v)
+            {
+                cfg.StageManagerGroupSameApp = v;
+                ShellController.Instance.SaveConfig();
+                if (ShellController.Instance.StageManager != null) ShellController.Instance.StageManager.RefreshShelf();
+            }));
+            sp.Children.Add(CreateToggleRow("Центрировать активное окно", "Автоматически размещает рабочее приложение по центру экрана", cfg.StageManagerAutoCenter, delegate(bool v)
+            {
+                cfg.StageManagerAutoCenter = v;
+                ShellController.Instance.SaveConfig();
+            }));
+
             sp.Children.Add(CreateSectionHeader("Размеры и анимация Dock"));
             sp.Children.Add(CreateSliderRow("Базовый размер иконок Dock", 38, 68, cfg.DockIconSize, "px", delegate(double v)
             {
