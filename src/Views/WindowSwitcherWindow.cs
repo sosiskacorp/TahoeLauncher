@@ -186,23 +186,25 @@ namespace MacOSTahoe
             });
             actions.Children.Add(_groupByAppBtn);
 
-            // Split View Button
-            Border splitViewBtn = CreateActionPill("◫ Split View", delegate
+            // Split View / Snap Button
+            Border splitViewBtn = CreateActionPill("◫ Привязка окон (Snap)", delegate
             {
                 List<OpenWindowEntry> wins = ShellController.Instance.GetOpenApplicationWindows();
-                if (wins.Count >= 2)
+                HideAnimated(delegate
                 {
-                    IntPtr left = wins[0].Hwnd;
-                    IntPtr right = wins[1].Hwnd;
-                    HideAnimated(delegate
+                    if (wins.Count >= 2)
                     {
-                        ShellController.Instance.EnterSplitView(left, right, 0.5);
-                    });
-                }
-                else
-                {
-                    MessageBox.Show("Для режима Split View необходимо как минимум два открытых окна.", "Split View", MessageBoxButton.OK, MessageBoxImage.Information);
-                }
+                        SnapHelper.SnapTwoWindows(wins[0].Hwnd, wins[1].Hwnd);
+                    }
+                    else if (wins.Count == 1)
+                    {
+                        SnapHelper.SnapLeft(wins[0].Hwnd);
+                    }
+                    else
+                    {
+                        SnapHelper.TriggerSnapLayouts();
+                    }
+                });
             });
             splitViewBtn.Margin = new Thickness(8, 0, 0, 0);
             actions.Children.Add(splitViewBtn);
@@ -321,12 +323,9 @@ namespace MacOSTahoe
         {
             _spacesStack.Children.Clear();
 
-            List<string> spaces = ShellController.Instance.Config.Spaces;
-            if (spaces == null || spaces.Count == 0)
-            {
-                spaces = new List<string> { "Рабочий стол 1", "Рабочий стол 2" };
-                ShellController.Instance.Config.Spaces = spaces;
-            }
+            List<string> spaces = VirtualDesktopHelper.GetDesktopNames();
+            ShellController.Instance.Config.Spaces = spaces;
+            _currentSpaceIndex = VirtualDesktopHelper.GetCurrentDesktopIndex();
 
             for (int i = 0; i < spaces.Count; i++)
             {
@@ -387,7 +386,11 @@ namespace MacOSTahoe
                     {
                         e.Handled = true;
                         ShellController.Instance.CloseSpace(index);
-                        RefreshSpacesBar();
+                        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, new Action(delegate
+                        {
+                            RefreshSpacesBar();
+                            PopulateWindows();
+                        }));
                     };
                     cardGrid.Children.Add(closeSpaceBtn);
                 }
@@ -508,8 +511,11 @@ namespace MacOSTahoe
                 {
                     e.Handled = true;
                     ShellController.Instance.CreateNewSpace();
-                    _currentSpaceIndex = ShellController.Instance.Config.Spaces.Count - 1;
-                    RefreshSpacesBar();
+                    Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, new Action(delegate
+                    {
+                        RefreshSpacesBar();
+                        PopulateWindows();
+                    }));
                 };
                 _spacesStack.Children.Add(addBtn);
             }
@@ -867,7 +873,7 @@ namespace MacOSTahoe
                     _isDragging = false;
                     _draggedWindow = null;
                     Hide();
-                    ShellController.Instance.EnterSplitView(left, right, 0.5);
+                    SnapHelper.SnapTwoWindows(left, right);
                     return;
                 }
 

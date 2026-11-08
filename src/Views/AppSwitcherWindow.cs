@@ -283,9 +283,7 @@ namespace MacOSTahoe
             if (!IsVisible) return;
 
             // Release any stuck Alt key states in Windows
-            NativeMethods.keybd_event(0x12, 0, 2, UIntPtr.Zero);
-            NativeMethods.keybd_event(0xA4, 0, 2, UIntPtr.Zero);
-            NativeMethods.keybd_event(0xA5, 0, 2, UIntPtr.Zero);
+            NativeMethods.ClearKeyboardModifiers();
 
             IntPtr targetHwnd = IntPtr.Zero;
             if (_selectedIndex >= 0 && _selectedIndex < _apps.Count)
@@ -340,9 +338,7 @@ namespace MacOSTahoe
         public void Cancel()
         {
             Hide();
-            NativeMethods.keybd_event(0x12, 0, 2, UIntPtr.Zero);
-            NativeMethods.keybd_event(0xA4, 0, 2, UIntPtr.Zero);
-            NativeMethods.keybd_event(0xA5, 0, 2, UIntPtr.Zero);
+            NativeMethods.ClearKeyboardModifiers();
         }
     }
 }

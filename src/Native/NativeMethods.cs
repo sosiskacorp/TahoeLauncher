@@ -349,7 +349,8 @@ namespace MacOSTahoe
 
                 BringWindowToTop(hWnd);
                 SetForegroundWindow(hWnd);
-                SwitchToThisWindow(hWnd, true);
+                SwitchToThisWindow(hWnd, false);
+                PostMessage(hWnd, 0x001F /* WM_CANCELMODE */, IntPtr.Zero, IntPtr.Zero);
             }
             catch { }
             finally
@@ -359,6 +360,21 @@ namespace MacOSTahoe
                     try { AttachThreadInput(curThread, fgThread, false); } catch { }
                 }
             }
+        }
+
+        public static void ClearKeyboardModifiers()
+        {
+            try
+            {
+                keybd_event(0x12, 0, 2, UIntPtr.Zero);
+                keybd_event(0xA4, 0, 2, UIntPtr.Zero);
+                keybd_event(0xA5, 0, 2, UIntPtr.Zero);
+                keybd_event(0x5B, 0, 2, UIntPtr.Zero);
+                keybd_event(0x5C, 0, 2, UIntPtr.Zero);
+                keybd_event(0x11, 0, 2, UIntPtr.Zero);
+                keybd_event(0x10, 0, 2, UIntPtr.Zero);
+            }
+            catch { }
         }
 
         public const uint ABM_NEW = 0x00000000;

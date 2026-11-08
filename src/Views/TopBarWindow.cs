@@ -159,13 +159,16 @@ namespace MacOSTahoe
 
                         if (vkCode == 0x12 || vkCode == 0xA4 || vkCode == 0xA5)
                         {
+                            NativeMethods.keybd_event(0x12, 0, 2, UIntPtr.Zero);
+                            NativeMethods.keybd_event(0xA4, 0, 2, UIntPtr.Zero);
+                            NativeMethods.keybd_event(0xA5, 0, 2, UIntPtr.Zero);
+
                             if (ShellController.Instance.AppSwitcher != null && ShellController.Instance.AppSwitcher.IsVisible)
                             {
                                 Dispatcher.BeginInvoke(new Action(delegate
                                 {
                                     ShellController.Instance.CommitAppSwitcher();
                                 }));
-                                // DO NOT return (IntPtr)1! Let WM_KEYUP reach Windows so Alt key is never stuck!
                             }
                         }
                     }
@@ -211,6 +214,7 @@ namespace MacOSTahoe
 
                                 if (isAltDown && !isCtrlDown)
                                 {
+                                    NativeMethods.ClearKeyboardModifiers();
                                     Dispatcher.BeginInvoke(new Action(delegate
                                     {
                                         ShellController.Instance.ToggleSpotlight();
@@ -1037,14 +1041,9 @@ namespace MacOSTahoe
             list.Add(CreateDropdownItem("Фоновые задачи и трей...", "Win+B", delegate() { ShellController.Instance.ToggleBackgroundTasks(); }));
             list.Add(CreateDropdownItem("Переключатель программ...", "Alt+Tab", delegate() { ShellController.Instance.ShowAppSwitcher(false); }));
             list.Add(CreateDropdownSeparator());
-            list.Add(CreateDropdownItem("Разделение экрана (Split View)...", "", delegate()
-            {
-                List<OpenWindowEntry> wins = ShellController.Instance.GetOpenApplicationWindows();
-                if (wins.Count >= 2)
-                    ShellController.Instance.EnterSplitView(wins[0].Hwnd, wins[1].Hwnd, 0.5);
-            }));
-            list.Add(CreateDropdownItem("Поместить окно слева (Split View)", "◧", delegate() { ShellController.Instance.StartSplitViewWithPicker(IntPtr.Zero, true); }));
-            list.Add(CreateDropdownItem("Поместить окно справа (Split View)", "◨", delegate() { ShellController.Instance.StartSplitViewWithPicker(IntPtr.Zero, false); }));
+            list.Add(CreateDropdownItem("Макеты привязки (Win + Z)...", "Win+Z", delegate() { SnapHelper.TriggerSnapLayouts(); }));
+            list.Add(CreateDropdownItem("Привязать окно слева (Snap Left)", "Win+←", delegate() { SnapHelper.SnapLeft(); }));
+            list.Add(CreateDropdownItem("Привязать окно справа (Snap Right)", "Win+→", delegate() { SnapHelper.SnapRight(); }));
             list.Add(CreateDropdownSeparator());
             list.Add(CreateDropdownItem("Свернуть окно", "", delegate()
             {

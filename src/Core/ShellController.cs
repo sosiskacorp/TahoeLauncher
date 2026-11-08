@@ -62,6 +62,8 @@ namespace MacOSTahoe
         public bool IsStageDesktopRevealed = false;
         public readonly Dictionary<IntPtr, int> WindowSpaceMap = new Dictionary<IntPtr, int>();
         private readonly HashSet<IntPtr> _hiddenBySpaceManager = new HashSet<IntPtr>();
+        private readonly HashSet<IntPtr> _stageMinimizedWindows = new HashSet<IntPtr>();
+        private readonly Dictionary<IntPtr, NativeMethods.RECT> _stageOriginalBounds = new Dictionary<IntPtr, NativeMethods.RECT>();
 
         public ImageSource DefaultAppIcon
         {
@@ -1390,19 +1392,53 @@ namespace MacOSTahoe
                 ActiveStageGroup = null;
                 MergedStageWindows.Clear();
 
-                // Restore all open application windows that were docked/minimized by Stage Manager
-                List<OpenWindowEntry> openWins = GetOpenApplicationWindows();
-                for (int i = 0; i < openWins.Count; i++)
+                // 1. Restore all windows specifically minimized by Stage Manager
+                foreach (IntPtr h in _stageMinimizedWindows)
                 {
-                    IntPtr h = openWins[i].Hwnd;
                     if (h != IntPtr.Zero && NativeMethods.IsWindow(h))
                     {
-                        if (NativeMethods.IsIconic(h))
+                        NativeMethods.ShowWindow(h, NativeMethods.SW_RESTORE);
+                    }
+                }
+                _stageMinimizedWindows.Clear();
+
+                // 2. Restore original bounds for windows resized/centered by Stage Manager
+                foreach (KeyValuePair<IntPtr, NativeMethods.RECT> kv in _stageOriginalBounds)
+                {
+                    IntPtr h = kv.Key;
+                    NativeMethods.RECT r = kv.Value;
+                    if (h != IntPtr.Zero && NativeMethods.IsWindow(h))
+                    {
+                        int w = r.Right - r.Left;
+                        int hgt = r.Bottom - r.Top;
+                        if (w > 100 && hgt > 100)
                         {
-                            NativeMethods.ShowWindow(h, NativeMethods.SW_RESTORE);
+                            NativeMethods.MoveWindow(h, r.Left, r.Top, w, hgt, true);
                         }
                     }
                 }
+                _stageOriginalBounds.Clear();
+
+                // 3. Fallback: Restore any open application windows that remain minimized
+                NativeMethods.EnumWindows(delegate(IntPtr hWnd, IntPtr lParam)
+                {
+                    if (!NativeMethods.IsWindow(hWnd)) return true;
+                    int exStyle = NativeMethods.GetWindowLong(hWnd, NativeMethods.GWL_EXSTYLE);
+                    if ((exStyle & NativeMethods.WS_EX_TOOLWINDOW) != 0) return true;
+                    if (NativeMethods.GetWindow(hWnd, 4) != IntPtr.Zero) return true;
+
+                    if (NativeMethods.IsIconic(hWnd))
+                    {
+                        StringBuilder sbClass = new StringBuilder(128);
+                        NativeMethods.GetClassName(hWnd, sbClass, sbClass.Capacity);
+                        string cls = sbClass.ToString();
+                        if (cls != "Progman" && cls != "WorkerW" && cls != "Shell_TrayWnd")
+                        {
+                            NativeMethods.ShowWindow(hWnd, NativeMethods.SW_RESTORE);
+                        }
+                    }
+                    return true;
+                }, IntPtr.Zero);
             }
             catch { }
         }
@@ -1518,7 +1554,16 @@ namespace MacOSTahoe
                         IntPtr h = other.Windows[j].Hwnd;
                         if (!target.HasHwnd(h) && NativeMethods.IsWindow(h))
                         {
-                            NativeMethods.ShowWindow(h, NativeMethods.SW_SHOWMINIMIZED);
+                            if (!NativeMethods.IsIconic(h))
+                            {
+                                NativeMethods.RECT r;
+                                if (NativeMethods.GetWindowRect(h, out r) && !_stageOriginalBounds.ContainsKey(h))
+                                {
+                                    _stageOriginalBounds[h] = r;
+                                }
+                                _stageMinimizedWindows.Add(h);
+                                NativeMethods.ShowWindow(h, NativeMethods.SW_SHOWMINIMIZED);
+                            }
                         }
                     }
                 }
@@ -1652,6 +1697,10 @@ namespace MacOSTahoe
             NativeMethods.RECT r;
             if (NativeMethods.GetWindowRect(hwnd, out r))
             {
+                if (!_stageOriginalBounds.ContainsKey(hwnd))
+                {
+                    _stageOriginalBounds[hwnd] = r;
+                }
                 int currentW = r.Right - r.Left;
                 int currentH = r.Bottom - r.Top;
 
@@ -1679,9 +1728,7 @@ namespace MacOSTahoe
             {
                 AppSwitcher.CommitSelection();
             }
-            NativeMethods.keybd_event(0x12, 0, 2, UIntPtr.Zero);
-            NativeMethods.keybd_event(0xA4, 0, 2, UIntPtr.Zero);
-            NativeMethods.keybd_event(0xA5, 0, 2, UIntPtr.Zero);
+            NativeMethods.ClearKeyboardModifiers();
         }
 
         public void AppSwitcherQuit()
@@ -1710,36 +1757,17 @@ namespace MacOSTahoe
 
         public void StartSplitViewWithPicker(IntPtr firstHwnd, bool isLeft)
         {
-            if (firstHwnd == IntPtr.Zero) firstHwnd = NativeMethods.GetForegroundWindow();
-            if (firstHwnd == IntPtr.Zero || !NativeMethods.IsWindow(firstHwnd)) return;
-
-            double top = (Config.ShowTopBar && TopBar != null) ? 32.0 : 0.0;
-            double dockH = (Config.ShowDock && !Config.DockAutoHide && Dock != null) ? 76.0 : 0.0;
-            double screenW = SystemParameters.PrimaryScreenWidth;
-            double screenH = SystemParameters.PrimaryScreenHeight;
-            double usableH = screenH - top - dockH;
-            double halfW = screenW / 2.0;
-
-            NativeMethods.ShowWindow(firstHwnd, NativeMethods.SW_RESTORE);
             if (isLeft)
-                NativeMethods.MoveWindow(firstHwnd, 0, (int)top, (int)halfW, (int)usableH, true);
+                SnapHelper.SnapLeft(firstHwnd);
             else
-                NativeMethods.MoveWindow(firstHwnd, (int)halfW, (int)top, (int)halfW, (int)usableH, true);
-
-            if (SplitViewPicker == null) SplitViewPicker = new SplitViewPickerWindow();
-            SplitViewPicker.ShowPicker(firstHwnd, isLeft);
+                SnapHelper.SnapRight(firstHwnd);
         }
 
         public void EnterSplitView(IntPtr leftHwnd, IntPtr rightHwnd, double ratio)
         {
             if (SplitViewPicker != null && SplitViewPicker.IsVisible) SplitViewPicker.Hide();
             if (BackgroundTasks != null && BackgroundTasks.IsVisible) BackgroundTasks.Hide();
-            if (SplitViewDivider == null) SplitViewDivider = new SplitViewDividerWindow();
-            SplitViewDivider.LeftHwnd = leftHwnd;
-            SplitViewDivider.RightHwnd = rightHwnd;
-            SplitViewDivider.SplitRatio = ratio;
-            SplitViewDivider.IsolateAndApplyLayout();
-            SplitViewDivider.Show();
+            SnapHelper.SnapTwoWindows(leftHwnd, rightHwnd);
         }
 
         public void ExitSplitView()
@@ -1748,99 +1776,33 @@ namespace MacOSTahoe
             if (BackgroundTasks != null && BackgroundTasks.IsVisible) BackgroundTasks.Hide();
             if (SplitViewDivider != null && SplitViewDivider.IsVisible)
             {
-                SplitViewDivider.RestoreIsolatedWindows();
                 SplitViewDivider.Hide();
             }
         }
 
         public void SnapActiveWindow(bool left)
         {
-            IntPtr hwnd = NativeMethods.GetForegroundWindow();
-            if (hwnd == IntPtr.Zero) return;
-            double top = (Config.ShowTopBar && TopBar != null) ? 32.0 : 0.0;
-            double screenW = SystemParameters.PrimaryScreenWidth;
-            double screenH = SystemParameters.PrimaryScreenHeight;
-            double h = screenH - top;
-            double w = screenW / 2.0;
-            double x = left ? 0.0 : w;
-
-            NativeMethods.ShowWindow(hwnd, NativeMethods.SW_RESTORE);
-            NativeMethods.MoveWindow(hwnd, (int)x, (int)top, (int)w, (int)h, true);
+            if (left) SnapHelper.SnapLeft();
+            else SnapHelper.SnapRight();
         }
 
         public void SnapActiveWindowRatio(bool left, double ratio)
         {
-            IntPtr hwnd = NativeMethods.GetForegroundWindow();
-            if (hwnd == IntPtr.Zero) return;
-            double top = (Config.ShowTopBar && TopBar != null) ? 32.0 : 0.0;
-            double screenW = SystemParameters.PrimaryScreenWidth;
-            double screenH = SystemParameters.PrimaryScreenHeight;
-            double h = screenH - top;
-            double w = screenW * ratio;
-            double x = left ? 0.0 : (screenW - w);
-
-            NativeMethods.ShowWindow(hwnd, NativeMethods.SW_RESTORE);
-            NativeMethods.MoveWindow(hwnd, (int)x, (int)top, (int)w, (int)h, true);
+            if (left) SnapHelper.SnapLeft();
+            else SnapHelper.SnapRight();
         }
 
         public void CreateNewSpace()
         {
-            if (Config.Spaces == null) Config.Spaces = new List<string>();
-            int newIndex = Config.Spaces.Count + 1;
-            Config.Spaces.Add("Рабочий стол " + newIndex.ToString());
+            VirtualDesktopHelper.CreateNewDesktop();
+            Config.Spaces = VirtualDesktopHelper.GetDesktopNames();
+            Config.CurrentSpaceIndex = VirtualDesktopHelper.GetCurrentDesktopIndex();
             SaveConfig();
-            SwitchToSpace(Config.Spaces.Count - 1);
         }
 
         public void SwitchToSpace(int index)
         {
-            if (Config.Spaces == null || index < 0 || index >= Config.Spaces.Count) return;
-            int previousSpace = Config.CurrentSpaceIndex;
-            if (previousSpace == index) return;
-
-            // 1. Map any currently untracked open windows to previousSpace
-            List<OpenWindowEntry> openWins = GetOpenApplicationWindows();
-            for (int i = 0; i < openWins.Count; i++)
-            {
-                IntPtr h = openWins[i].Hwnd;
-                if (!WindowSpaceMap.ContainsKey(h))
-                {
-                    int assigned = GetAppSpaceAssignment(openWins[i].ProcessName);
-                    WindowSpaceMap[h] = (assigned >= 0 && assigned < Config.Spaces.Count) ? assigned : previousSpace;
-                }
-            }
-
-            // 2. Perform true space window isolation: reveal target space windows, hide other space windows
-            List<IntPtr> tracked = new List<IntPtr>(WindowSpaceMap.Keys);
-            for (int i = 0; i < tracked.Count; i++)
-            {
-                IntPtr h = tracked[i];
-                if (!NativeMethods.IsWindow(h))
-                {
-                    WindowSpaceMap.Remove(h);
-                    _hiddenBySpaceManager.Remove(h);
-                    continue;
-                }
-
-                int space = WindowSpaceMap[h];
-                if (space == index)
-                {
-                    if (_hiddenBySpaceManager.Contains(h))
-                    {
-                        NativeMethods.ShowWindow(h, NativeMethods.SW_SHOWNOACTIVATE);
-                        _hiddenBySpaceManager.Remove(h);
-                    }
-                }
-                else
-                {
-                    if (NativeMethods.IsWindowVisible(h))
-                    {
-                        _hiddenBySpaceManager.Add(h);
-                        NativeMethods.ShowWindow(h, NativeMethods.SW_HIDE);
-                    }
-                }
-            }
-
+            VirtualDesktopHelper.SwitchToDesktop(index);
             Config.CurrentSpaceIndex = index;
             SaveConfig();
 
@@ -1863,18 +1825,8 @@ namespace MacOSTahoe
         public void MoveWindowToSpace(IntPtr hwnd, int targetSpaceIndex)
         {
             if (hwnd == IntPtr.Zero || !NativeMethods.IsWindow(hwnd)) return;
-            WindowSpaceMap[hwnd] = targetSpaceIndex;
-            if (targetSpaceIndex != Config.CurrentSpaceIndex)
-            {
-                _hiddenBySpaceManager.Add(hwnd);
-                NativeMethods.ShowWindow(hwnd, NativeMethods.SW_HIDE);
-            }
-            else
-            {
-                _hiddenBySpaceManager.Remove(hwnd);
-                NativeMethods.ShowWindow(hwnd, NativeMethods.SW_SHOW);
-                NativeMethods.SetForegroundWindow(hwnd);
-            }
+            SwitchToSpace(targetSpaceIndex);
+            NativeMethods.ForceForegroundWindow(hwnd);
         }
 
         public void AssignAppToSpace(string appName, int spaceIndex)
