@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -157,6 +157,7 @@ namespace MacOSTahoe
 
             _glassShelf = new Border();
             _glassShelf.Height = BaseIconSize + 14;
+            _glassShelf.Width = 300.0;
             _glassShelf.HorizontalAlignment = HorizontalAlignment.Center;
             _glassShelf.VerticalAlignment = VerticalAlignment.Bottom;
             _glassShelf.Margin = new Thickness(0, 0, 0, 8);
@@ -215,7 +216,19 @@ namespace MacOSTahoe
         {
             if (_itemsPanel == null) return;
             _itemsPanel.Children.Clear();
-            if (_glassShelf != null) _glassShelf.Height = BaseIconSize + 14;
+            if (_glassShelf != null)
+            {
+                _glassShelf.Height = BaseIconSize + 14;
+                double initialRowW = 0.0;
+                if (ShellController.Instance != null && ShellController.Instance.DockItems != null)
+                {
+                    foreach (DockAppItem item in ShellController.Instance.DockItems)
+                    {
+                        initialRowW += item.IsSeparator ? 15.0 : (BaseIconSize + ItemMarginX * 2.0);
+                    }
+                }
+                _glassShelf.Width = Math.Max(200.0, initialRowW + 24.0);
+            }
             foreach (DockAppItem item in ShellController.Instance.DockItems)
             {
                 _itemsPanel.Children.Add(CreateDockItemElement(item));
@@ -646,8 +659,15 @@ namespace MacOSTahoe
                 totalShelfWidth += item.CurrentSize + (ItemMarginX * 2.0);
             }
 
-            double shelfW = Math.Max(200.0, unmagnifiedRowWidth + 24.0);
-            if (Math.Abs(_glassShelf.Width - shelfW) > 1.0) _glassShelf.Width = shelfW;
+            double shelfW = Math.Max(200.0, totalShelfWidth);
+            if (double.IsNaN(_glassShelf.Width) || Math.Abs(_glassShelf.Width - shelfW) > 0.5)
+            {
+                _glassShelf.Width = shelfW;
+            }
+            if (_glassShelf.Height != baseSize + 14)
+            {
+                _glassShelf.Height = baseSize + 14;
+            }
 
             if (hoveredClosest != null && dockActiveHover && !popupOpen)
             {
@@ -682,6 +702,11 @@ namespace MacOSTahoe
             {
                 _currentSlideY = _targetSlideY;
                 _dockSlideTransform.Y = _currentSlideY;
+                double idleShelfW = Math.Max(200.0, unmagnifiedRowWidth + 24.0);
+                if (double.IsNaN(_glassShelf.Width) || Math.Abs(_glassShelf.Width - idleShelfW) > 0.5)
+                {
+                    _glassShelf.Width = idleShelfW;
+                }
                 for (int i = 0; i < items.Count; i++)
                 {
                     items[i].CurrentSize = baseSize;
