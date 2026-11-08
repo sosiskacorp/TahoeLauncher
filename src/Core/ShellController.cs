@@ -1497,7 +1497,7 @@ namespace MacOSTahoe
                     if (NativeMethods.IsIconic(h)) NativeMethods.ShowWindow(h, NativeMethods.SW_RESTORE);
                     NativeMethods.ShowWindow(h, NativeMethods.SW_SHOW);
                     NativeMethods.SetForegroundWindow(h);
-                    NativeMethods.SwitchToThisWindow(h, true);
+                    NativeMethods.SwitchToThisWindow(h, false);
                 }
             }
 
@@ -1549,7 +1549,7 @@ namespace MacOSTahoe
                     if (NativeMethods.IsIconic(h)) NativeMethods.ShowWindow(h, NativeMethods.SW_RESTORE);
                     NativeMethods.ShowWindow(h, NativeMethods.SW_SHOW);
                     NativeMethods.SetForegroundWindow(h);
-                    NativeMethods.SwitchToThisWindow(h, true);
+                    NativeMethods.SwitchToThisWindow(h, false);
                 }
             }
 
@@ -1569,7 +1569,7 @@ namespace MacOSTahoe
             {
                 if (NativeMethods.IsIconic(topHwnd)) NativeMethods.ShowWindow(topHwnd, NativeMethods.SW_RESTORE);
                 NativeMethods.SetForegroundWindow(topHwnd);
-                NativeMethods.SwitchToThisWindow(topHwnd, true);
+                NativeMethods.SwitchToThisWindow(topHwnd, false);
             }
             if (StageManager != null) StageManager.RefreshShelf();
         }
@@ -2126,7 +2126,7 @@ namespace MacOSTahoe
                     {
                         NativeMethods.ShowWindow(item.ActiveHwnd, NativeMethods.SW_RESTORE);
                     }
-                    NativeMethods.SwitchToThisWindow(item.ActiveHwnd, true);
+                    NativeMethods.SwitchToThisWindow(item.ActiveHwnd, false);
                     NativeMethods.SetForegroundWindow(item.ActiveHwnd);
                 }
                 return;

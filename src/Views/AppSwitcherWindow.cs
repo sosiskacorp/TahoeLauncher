@@ -5,26 +5,15 @@ using System.Globalization;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.ComTypes;
 using System.Text;
-using System.Text.RegularExpressions;
-using System.Threading;
-using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
-using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
-using System.Windows.Shapes;
-using System.Windows.Threading;
-using Microsoft.Win32;
-using IOPath = System.IO.Path;
-using WpfPath = System.Windows.Shapes.Path;
 
 namespace MacOSTahoe
 {
@@ -32,13 +21,14 @@ namespace MacOSTahoe
     {
         private StackPanel _iconsStack;
         private TextBlock _appNameText;
+        private Border _glassCard;
         private List<OpenWindowEntry> _apps = new List<OpenWindowEntry>();
         private List<Border> _itemCards = new List<Border>();
         private int _selectedIndex = 0;
 
         public AppSwitcherWindow()
         {
-            Title = "Переключатель программ (Command + Tab)";
+            Title = "Command + Tab";
             WindowStyle = WindowStyle.None;
             AllowsTransparency = true;
             ResizeMode = ResizeMode.NoResize;
@@ -46,11 +36,7 @@ namespace MacOSTahoe
             ShowInTaskbar = false;
             Background = Brushes.Transparent;
             FontFamily = LiquidGlassTheme.UiFont;
-
-            Width = 600;
-            Height = 140;
-            Left = (SystemParameters.PrimaryScreenWidth - Width) / 2.0;
-            Top = (SystemParameters.PrimaryScreenHeight - Height) / 2.0;
+            SizeToContent = SizeToContent.WidthAndHeight;
 
             BuildUI();
 
@@ -59,7 +45,8 @@ namespace MacOSTahoe
             SourceInitialized += delegate
             {
                 NativeMethods.MakeToolWindow(this, true);
-                NativeMethods.EnableBlur(this, 0xDD12121A);
+                // Do not call EnableBlur here: in WPF with AllowsTransparency=true, DWM EnableBlur
+                // produces an opaque black rectangle around transparent rounded corners.
             };
 
             Deactivated += delegate
@@ -73,21 +60,40 @@ namespace MacOSTahoe
 
         private void BuildUI()
         {
-            Border glassCard = new Border
+            _glassCard = new Border
             {
-                CornerRadius = new CornerRadius(24),
-                Background = LiquidGlassTheme.CreateGlassBrush(230, 246),
-                BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush(),
+                CornerRadius = new CornerRadius(22),
+                Background = new LinearGradientBrush
+                {
+                    StartPoint = new Point(0, 0),
+                    EndPoint = new Point(0, 1),
+                    GradientStops = new GradientStopCollection
+                    {
+                        new GradientStop(Color.FromArgb(175, 42, 45, 58), 0.0),
+                        new GradientStop(Color.FromArgb(195, 24, 26, 36), 1.0)
+                    }
+                },
+                BorderBrush = new LinearGradientBrush
+                {
+                    StartPoint = new Point(0, 0),
+                    EndPoint = new Point(0, 1),
+                    GradientStops = new GradientStopCollection
+                    {
+                        new GradientStop(Color.FromArgb(140, 255, 255, 255), 0.0),
+                        new GradientStop(Color.FromArgb(40, 255, 255, 255), 1.0)
+                    }
+                },
                 BorderThickness = new Thickness(1),
-                Padding = new Thickness(18, 14, 18, 12),
+                Padding = new Thickness(16, 14, 16, 12),
+                Margin = new Thickness(36), // Margin prevents drop shadow clipping
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
-            glassCard.Effect = new DropShadowEffect
+            _glassCard.Effect = new DropShadowEffect
             {
-                BlurRadius = 40,
-                ShadowDepth = 12,
-                Opacity = 0.75,
+                BlurRadius = 36,
+                ShadowDepth = 8,
+                Opacity = 0.38,
                 Color = Colors.Black
             };
 
@@ -115,17 +121,24 @@ namespace MacOSTahoe
             _appNameText = new TextBlock
             {
                 Text = "",
-                FontSize = 13.5,
+                FontSize = 13.0,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = Brushes.White,
+                Foreground = new SolidColorBrush(Color.FromRgb(245, 245, 247)),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Margin = new Thickness(0, 8, 0, 0),
                 TextAlignment = TextAlignment.Center
             };
+            _appNameText.Effect = new DropShadowEffect
+            {
+                BlurRadius = 4,
+                ShadowDepth = 1,
+                Opacity = 0.6,
+                Color = Colors.Black
+            };
             root.Children.Add(_appNameText);
 
-            glassCard.Child = root;
-            Content = glassCard;
+            _glassCard.Child = root;
+            Content = _glassCard;
         }
 
         public void ShowAndStep(bool backward)
@@ -155,14 +168,11 @@ namespace MacOSTahoe
                 _selectedIndex = (_apps.Count > 1) ? 1 : 0;
                 HighlightSelection();
 
-                // Center dynamically
-                double desiredWidth = Math.Min(SystemParameters.PrimaryScreenWidth - 100, Math.Max(260, (_apps.Count * 76) + 60));
-                Width = desiredWidth;
-                Left = (SystemParameters.PrimaryScreenWidth - Width) / 2.0;
-                Top = (SystemParameters.PrimaryScreenHeight - Height) / 2.0;
-
                 Show();
                 Activate();
+                UpdateLayout();
+                Left = (SystemParameters.PrimaryScreenWidth - ActualWidth) / 2.0;
+                Top = (SystemParameters.PrimaryScreenHeight - ActualHeight) / 2.0;
             }
             else
             {
@@ -191,9 +201,9 @@ namespace MacOSTahoe
 
                 Border card = new Border
                 {
-                    Width = 66,
-                    Height = 66,
-                    CornerRadius = new CornerRadius(16),
+                    Width = 68,
+                    Height = 68,
+                    CornerRadius = new CornerRadius(14),
                     Background = Brushes.Transparent,
                     BorderBrush = Brushes.Transparent,
                     BorderThickness = new Thickness(1),
@@ -204,8 +214,8 @@ namespace MacOSTahoe
                 Grid iconGrid = new Grid();
                 Image iconImg = new Image
                 {
-                    Width = 48,
-                    Height = 48,
+                    Width = 50,
+                    Height = 50,
                     Stretch = Stretch.Uniform,
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Center
@@ -236,7 +246,7 @@ namespace MacOSTahoe
             {
                 if (i == _selectedIndex)
                 {
-                    _itemCards[i].Background = new SolidColorBrush(Color.FromArgb(70, 255, 255, 255));
+                    _itemCards[i].Background = new SolidColorBrush(Color.FromArgb(75, 255, 255, 255));
                     _itemCards[i].BorderBrush = new SolidColorBrush(Color.FromArgb(120, 255, 255, 255));
                 }
                 else
@@ -257,14 +267,18 @@ namespace MacOSTahoe
             if (_selectedIndex >= 0 && _selectedIndex < _apps.Count)
             {
                 IntPtr hwnd = _apps[_selectedIndex].Hwnd;
-                if (hwnd != IntPtr.Zero)
+                if (hwnd != IntPtr.Zero && NativeMethods.IsWindow(hwnd))
                 {
                     if (NativeMethods.IsIconic(hwnd))
                     {
                         NativeMethods.ShowWindow(hwnd, NativeMethods.SW_RESTORE);
                     }
+                    else
+                    {
+                        NativeMethods.ShowWindow(hwnd, NativeMethods.SW_SHOW);
+                    }
                     NativeMethods.SetForegroundWindow(hwnd);
-                    NativeMethods.SwitchToThisWindow(hwnd, true);
+                    NativeMethods.SwitchToThisWindow(hwnd, false);
                 }
             }
         }
@@ -273,7 +287,7 @@ namespace MacOSTahoe
         {
             if (!IsVisible || _selectedIndex < 0 || _selectedIndex >= _apps.Count) return;
             OpenWindowEntry target = _apps[_selectedIndex];
-            if (target.Hwnd != IntPtr.Zero)
+            if (target.Hwnd != IntPtr.Zero && NativeMethods.IsWindow(target.Hwnd))
             {
                 NativeMethods.PostMessage(target.Hwnd, 0x0010 /* WM_CLOSE */, IntPtr.Zero, IntPtr.Zero);
             }
@@ -288,13 +302,16 @@ namespace MacOSTahoe
             if (_selectedIndex >= _apps.Count) _selectedIndex = _apps.Count - 1;
             RebuildVisuals();
             HighlightSelection();
+            UpdateLayout();
+            Left = (SystemParameters.PrimaryScreenWidth - ActualWidth) / 2.0;
+            Top = (SystemParameters.PrimaryScreenHeight - ActualHeight) / 2.0;
         }
 
         public void HideSelectedApp()
         {
             if (!IsVisible || _selectedIndex < 0 || _selectedIndex >= _apps.Count) return;
             OpenWindowEntry target = _apps[_selectedIndex];
-            if (target.Hwnd != IntPtr.Zero)
+            if (target.Hwnd != IntPtr.Zero && NativeMethods.IsWindow(target.Hwnd))
             {
                 NativeMethods.ShowWindow(target.Hwnd, NativeMethods.SW_SHOWMINIMIZED);
             }

@@ -44,7 +44,7 @@ namespace MacOSTahoe
             Top = 0;
             Width = SystemParameters.PrimaryScreenWidth;
             Height = SystemParameters.PrimaryScreenHeight;
-            Background = new SolidColorBrush(Color.FromArgb(215, 10, 12, 18));
+            Background = new SolidColorBrush(Color.FromArgb(50, 14, 18, 28));
             FontFamily = LiquidGlassTheme.UiFont;
 
             BuildUI();
@@ -805,7 +805,7 @@ namespace MacOSTahoe
                         NativeMethods.ShowWindow(win.Hwnd, NativeMethods.SW_RESTORE);
                     }
                     NativeMethods.SetForegroundWindow(win.Hwnd);
-                    NativeMethods.SwitchToThisWindow(win.Hwnd, true);
+                    NativeMethods.SwitchToThisWindow(win.Hwnd, false);
                 }
             };
 

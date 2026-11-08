@@ -136,6 +136,15 @@ namespace MacOSTahoe
                     }
                     else if (isKeyUp)
                     {
+                        if (vkCode == 0x09)
+                        {
+                            bool isAltDown = ((NativeMethods.GetAsyncKeyState(0x12) & 0x8000) != 0) || ((NativeMethods.GetAsyncKeyState(0xA4) & 0x8000) != 0) || ((NativeMethods.GetAsyncKeyState(0xA5) & 0x8000) != 0);
+                            if (isAltDown || (ShellController.Instance.AppSwitcher != null && ShellController.Instance.AppSwitcher.IsVisible))
+                            {
+                                return (IntPtr)1;
+                            }
+                        }
+
                         if (vkCode == 0x12 || vkCode == 0xA4 || vkCode == 0xA5)
                         {
                             if (ShellController.Instance.AppSwitcher != null && ShellController.Instance.AppSwitcher.IsVisible)
@@ -144,6 +153,7 @@ namespace MacOSTahoe
                                 {
                                     ShellController.Instance.CommitAppSwitcher();
                                 }));
+                                return (IntPtr)1;
                             }
                         }
                     }
