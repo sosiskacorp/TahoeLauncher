@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -11,7 +11,8 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
-using System.Windows.Shapes;
+using IOPath = System.IO.Path;
+using Microsoft.Win32;
 
 namespace MacOSTahoe
 {
@@ -32,18 +33,6 @@ namespace MacOSTahoe
         private TextBlock _countText;
         private TextBlock _taskbarToggleText;
 
-        private static readonly HashSet<string> SystemBlacklist = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "svchost", "dwm", "conhost", "fontdrvhost", "csrss", "smss", "lsass",
-            "wininit", "services", "spoolsv", "RuntimeBroker", "ApplicationFrameHost",
-            "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost", "ctfmon",
-            "SystemSettings", "taskhostw", "TextInputHost", "sihost", "audiodg",
-            "SearchIndexer", "SecurityHealthSystray", "SecurityHealthService", "wlanext",
-            "smartscreen", "explorer", "MacOSTahoe", "Idle", "System", "cmd",
-            "dllhost", "wmpnetwk", "SearchApp", "Widgets", "WidgetService", "LockApp",
-            "SettingSyncHost", "CompPkgSrv", "backgroundTaskHost", "consent", "WmiPrvSE"
-        };
-
         public BackgroundTasksWindow()
         {
             Title = "Фоновые задачи и системный трей";
@@ -53,7 +42,7 @@ namespace MacOSTahoe
             Topmost = true;
             ShowInTaskbar = false;
             Width = 400;
-            Height = 580;
+            Height = 560;
             Background = Brushes.Transparent;
             FontFamily = LiquidGlassTheme.UiFont;
 
@@ -67,7 +56,7 @@ namespace MacOSTahoe
             SourceInitialized += delegate(object s, EventArgs e)
             {
                 NativeMethods.MakeToolWindow(this, true);
-                NativeMethods.EnableBlur(this, 0xDD14141E);
+                // Do NOT call EnableBlur here: in transparent WPF windows DWM produces a pitch-black rectangular border
             };
         }
 
@@ -82,20 +71,20 @@ namespace MacOSTahoe
             card.Padding = new Thickness(16, 14, 16, 14);
             card.Effect = new DropShadowEffect
             {
-                BlurRadius = 30,
+                BlurRadius = 28,
                 ShadowDepth = 8,
-                Opacity = 0.62,
+                Opacity = 0.58,
                 Color = Colors.Black
             };
 
             Grid root = new Grid();
-            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Header
-            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Native Tray Card
-            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Sub-header
-            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // Apps Scroll
-            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Footer Links
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 0: Header
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 1: Native Taskbar Card
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 2: Sub-header
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 3: Apps Scroll
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 4: Footer Links
 
-            // --- 1. HEADER ---
+            // --- 0. HEADER ---
             Grid header = new Grid { Margin = new Thickness(0, 0, 0, 12) };
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -151,12 +140,12 @@ namespace MacOSTahoe
             Grid.SetRow(header, 0);
             root.Children.Add(header);
 
-            // --- 2. NATIVE TRAY CARD ---
+            // --- 1. NATIVE TASKBAR / TRAY CONTROLS ---
             Border trayCard = new Border
             {
                 CornerRadius = new CornerRadius(14),
-                Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(35, 255, 255, 255)),
+                Background = new SolidColorBrush(Color.FromArgb(36, 255, 255, 255)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(30, 255, 255, 255)),
                 BorderThickness = new Thickness(1),
                 Padding = new Thickness(12, 10, 12, 10),
                 Margin = new Thickness(0, 0, 0, 12)
@@ -165,15 +154,15 @@ namespace MacOSTahoe
             StackPanel trayStack = new StackPanel();
             TextBlock trayTitle = new TextBlock
             {
-                Text = "Область уведомлений Windows (Трей)",
+                Text = "Панель задач и область уведомлений Windows",
                 FontSize = 12,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Brushes.White,
-                Margin = new Thickness(0, 0, 0, 4)
+                Margin = new Thickness(0, 0, 0, 3)
             };
             TextBlock trayDesc = new TextBlock
             {
-                Text = "Нативные скрытые значки Windows 11, безопасное извлечение и службы",
+                Text = "Быстрый переключатель нативной панели задач и системных настроек трея",
                 FontSize = 11,
                 Foreground = new SolidColorBrush(Color.FromArgb(160, 235, 235, 245)),
                 Margin = new Thickness(0, 0, 0, 8),
@@ -187,36 +176,10 @@ namespace MacOSTahoe
             trayBtns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(8) });
             trayBtns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-            Border openTrayBtn = new Border
-            {
-                CornerRadius = new CornerRadius(8),
-                Background = LiquidGlassTheme.AccentBlueBrush,
-                Padding = new Thickness(8, 6, 8, 6),
-                Cursor = Cursors.Hand
-            };
-            openTrayBtn.Child = new TextBlock
-            {
-                Text = "Открыть трей (Win+B)",
-                FontSize = 11.5,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = Brushes.White,
-                HorizontalAlignment = HorizontalAlignment.Center
-            };
-            openTrayBtn.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
-            {
-                e.Handled = true;
-                Hide();
-                NativeMethods.OpenNativeTrayOverflow();
-            };
-            Grid.SetColumn(openTrayBtn, 0);
-            trayBtns.Children.Add(openTrayBtn);
-
             Border toggleBarBtn = new Border
             {
                 CornerRadius = new CornerRadius(8),
-                Background = new SolidColorBrush(Color.FromArgb(50, 255, 255, 255)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
-                BorderThickness = new Thickness(1),
+                Background = LiquidGlassTheme.AccentBlueBrush,
                 Padding = new Thickness(8, 6, 8, 6),
                 Cursor = Cursors.Hand
             };
@@ -224,7 +187,7 @@ namespace MacOSTahoe
             {
                 Text = "Показать панель задач",
                 FontSize = 11.5,
-                FontWeight = FontWeights.Medium,
+                FontWeight = FontWeights.SemiBold,
                 Foreground = Brushes.White,
                 HorizontalAlignment = HorizontalAlignment.Center
             };
@@ -235,8 +198,34 @@ namespace MacOSTahoe
                 NativeMethods.ToggleNativeTaskbar();
                 UpdateTaskbarToggleText();
             };
-            Grid.SetColumn(toggleBarBtn, 2);
+            Grid.SetColumn(toggleBarBtn, 0);
             trayBtns.Children.Add(toggleBarBtn);
+
+            Border settingsTrayBtn = new Border
+            {
+                CornerRadius = new CornerRadius(8),
+                Background = new SolidColorBrush(Color.FromArgb(50, 255, 255, 255)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(8, 6, 8, 6),
+                Cursor = Cursors.Hand
+            };
+            settingsTrayBtn.Child = new TextBlock
+            {
+                Text = "Параметры трея",
+                FontSize = 11.5,
+                FontWeight = FontWeights.Medium,
+                Foreground = Brushes.White,
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+            settingsTrayBtn.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
+            {
+                e.Handled = true;
+                Hide();
+                ShellController.RunProcess("explorer.exe", "ms-settings:taskbar");
+            };
+            Grid.SetColumn(settingsTrayBtn, 2);
+            trayBtns.Children.Add(settingsTrayBtn);
 
             trayStack.Children.Add(trayBtns);
             trayCard.Child = trayStack;
@@ -244,14 +233,14 @@ namespace MacOSTahoe
             Grid.SetRow(trayCard, 1);
             root.Children.Add(trayCard);
 
-            // --- 3. SUB-HEADER ---
+            // --- 2. SUB-HEADER ---
             Grid subHeader = new Grid { Margin = new Thickness(0, 0, 0, 6) };
             subHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             subHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
             TextBlock subTitle = new TextBlock
             {
-                Text = "Активные приложения в фоне",
+                Text = "Активные программы в трее",
                 FontSize = 12.5,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Brushes.White
@@ -277,7 +266,7 @@ namespace MacOSTahoe
             Grid.SetRow(subHeader, 2);
             root.Children.Add(subHeader);
 
-            // --- 4. APPS SCROLLVIEWER ---
+            // --- 3. APPS SCROLLVIEWER ---
             ScrollViewer sv = new ScrollViewer
             {
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -290,7 +279,7 @@ namespace MacOSTahoe
             Grid.SetRow(sv, 3);
             root.Children.Add(sv);
 
-            // --- 5. FOOTER LINKS ---
+            // --- 4. FOOTER LINKS ---
             Grid footer = new Grid { Margin = new Thickness(0, 4, 0, 0) };
             footer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             footer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(6) });
@@ -355,94 +344,308 @@ namespace MacOSTahoe
             _taskbarToggleText.Text = vis ? "Скрыть панель задач" : "Показать панель задач";
         }
 
+        private static string ResolveKnownFolder(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return "";
+            string progFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            string progFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+            string winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+            string sys32 = Environment.GetFolderPath(Environment.SpecialFolder.System);
+
+            path = path.Replace("{6D809377-6AF0-444B-8957-A3773F02200E}", progFiles);
+            path = path.Replace("{7C5A40EF-A0FB-4BFC-874A-C0F2E0B9FA8E}", progFilesX86);
+            path = path.Replace("{F38BF404-1D43-42F2-9305-67DE0B28FC23}", winDir);
+            path = path.Replace("{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}", sys32);
+            return path;
+        }
+
+        private static ImageSource ImageFromPngBytes(byte[] bytes)
+        {
+            if (bytes == null || bytes.Length == 0) return null;
+            try
+            {
+                using (MemoryStream ms = new MemoryStream(bytes))
+                {
+                    BitmapImage bmp = new BitmapImage();
+                    bmp.BeginInit();
+                    bmp.CacheOption = BitmapCacheOption.OnLoad;
+                    bmp.StreamSource = ms;
+                    bmp.EndInit();
+                    bmp.Freeze();
+                    return bmp;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static ImageSource ExtractIconFromExe(string exePath)
+        {
+            if (string.IsNullOrEmpty(exePath) || !File.Exists(exePath)) return null;
+            try
+            {
+                using (System.Drawing.Icon ico = System.Drawing.Icon.ExtractAssociatedIcon(exePath))
+                {
+                    if (ico != null)
+                    {
+                        BitmapSource bs = Imaging.CreateBitmapSourceFromHIcon(ico.Handle, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+                        bs.Freeze();
+                        NativeMethods.DestroyIcon(ico.Handle);
+                        return bs;
+                    }
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static string FormatFriendlyName(string exeName, string tip, string exePath)
+        {
+            // Known friendly mappings
+            if (string.Equals(exeName, "MSIAfterburner", StringComparison.OrdinalIgnoreCase)) return "MSI Afterburner";
+            if (string.Equals(exeName, "wallpaper32", StringComparison.OrdinalIgnoreCase) || string.Equals(exeName, "wallpaper64", StringComparison.OrdinalIgnoreCase)) return "Wallpaper Engine";
+            if (string.Equals(exeName, "DCv2", StringComparison.OrdinalIgnoreCase)) return "MSI Center";
+            if (string.Equals(exeName, "sunshine", StringComparison.OrdinalIgnoreCase)) return "Sunshine (Game Stream)";
+            if (string.Equals(exeName, "steam", StringComparison.OrdinalIgnoreCase)) return "Steam";
+            if (string.Equals(exeName, "Discord", StringComparison.OrdinalIgnoreCase)) return "Discord";
+            if (string.Equals(exeName, "iMe", StringComparison.OrdinalIgnoreCase)) return "Telegram (iMe)";
+            if (string.Equals(exeName, "Telegram", StringComparison.OrdinalIgnoreCase)) return "Telegram Desktop";
+            if (string.Equals(exeName, "AnyDesk", StringComparison.OrdinalIgnoreCase)) return "AnyDesk";
+            if (string.Equals(exeName, "fixnet", StringComparison.OrdinalIgnoreCase)) return "Fixnet";
+            if (string.Equals(exeName, "SCSKiller", StringComparison.OrdinalIgnoreCase)) return "SCSKiller";
+            if (string.Equals(exeName, "nvcontainer", StringComparison.OrdinalIgnoreCase) || string.Equals(exeName, "NVDisplay.Container", StringComparison.OrdinalIgnoreCase)) return "Настройки NVIDIA";
+            if (string.Equals(exeName, "vlc", StringComparison.OrdinalIgnoreCase)) return "VLC Media Player";
+            if (string.Equals(exeName, "DSX", StringComparison.OrdinalIgnoreCase)) return "DualSenseX (DSX)";
+            if (string.Equals(exeName, "EpicGamesLauncher", StringComparison.OrdinalIgnoreCase)) return "Epic Games Launcher";
+            if (string.Equals(exeName, "deluge", StringComparison.OrdinalIgnoreCase)) return "Deluge Torrent";
+            if (string.Equals(exeName, "Creative Cloud", StringComparison.OrdinalIgnoreCase)) return "Adobe Creative Cloud";
+
+            // If tip has a clean title, use it
+            if (!string.IsNullOrEmpty(tip) && tip.Length >= 2 && !tip.Contains("?") && !tip.Contains(""))
+            {
+                return tip.Trim();
+            }
+
+            // File description from executable
+            if (!string.IsNullOrEmpty(exePath) && File.Exists(exePath))
+            {
+                try
+                {
+                    FileVersionInfo vi = FileVersionInfo.GetVersionInfo(exePath);
+                    if (!string.IsNullOrEmpty(vi.FileDescription) && !vi.FileDescription.Contains("?") && !vi.FileDescription.Contains(""))
+                    {
+                        return vi.FileDescription.Trim();
+                    }
+                }
+                catch { }
+            }
+
+            return exeName;
+        }
+
         public void RefreshTasks()
         {
             UpdateTaskbarToggleText();
             _itemsListPanel.Children.Clear();
 
             int curSession = Process.GetCurrentProcess().SessionId;
-            Dictionary<string, BackgroundAppItem> apps = new Dictionary<string, BackgroundAppItem>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, List<Process>> runningMap = new Dictionary<string, List<Process>>(StringComparer.OrdinalIgnoreCase);
 
-            Process[] procs = Process.GetProcesses();
-            for (int i = 0; i < procs.Length; i++)
+            Process[] allProcs = Process.GetProcesses();
+            for (int i = 0; i < allProcs.Length; i++)
             {
-                Process p = procs[i];
+                Process p = allProcs[i];
                 try
                 {
-                    if (p.SessionId != curSession) continue;
-                    string name = p.ProcessName;
-                    if (string.IsNullOrEmpty(name)) continue;
-                    if (SystemBlacklist.Contains(name)) continue;
-                    if (name.StartsWith("ServiceHub", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (p.SessionId != curSession) { p.Dispose(); continue; }
+                    string pn = p.ProcessName;
+                    if (string.IsNullOrEmpty(pn)) { p.Dispose(); continue; }
 
-                    long mem = 0;
-                    try { mem = p.WorkingSet64 / (1024 * 1024); } catch { }
-
-                    BackgroundAppItem item;
-                    if (apps.TryGetValue(name, out item))
+                    List<Process> pList;
+                    if (!runningMap.TryGetValue(pn, out pList))
                     {
-                        item.MemoryMb += mem;
-                        if (item.Hwnd == IntPtr.Zero && p.MainWindowHandle != IntPtr.Zero)
-                        {
-                            item.Hwnd = p.MainWindowHandle;
-                        }
+                        pList = new List<Process>();
+                        runningMap[pn] = pList;
                     }
-                    else
-                    {
-                        string desc = name;
-                        string exePath = "";
-                        try
-                        {
-                            exePath = p.MainModule.FileName;
-                            string fileDesc = p.MainModule.FileVersionInfo.FileDescription;
-                            if (!string.IsNullOrEmpty(fileDesc)) desc = fileDesc;
-                        }
-                        catch { }
-
-                        ImageSource icon = null;
-                        if (ShellController.Instance != null)
-                        {
-                            icon = ShellController.Instance.ResolveDynamicIcon(name, (uint)p.Id);
-                        }
-
-                        apps[name] = new BackgroundAppItem
-                        {
-                            Pid = p.Id,
-                            ProcessName = name,
-                            DisplayName = desc,
-                            ExePath = exePath,
-                            MemoryMb = mem,
-                            Icon = icon,
-                            Hwnd = p.MainWindowHandle
-                        };
-                    }
+                    pList.Add(p);
                 }
-                catch { }
-                finally
+                catch
                 {
                     p.Dispose();
                 }
             }
 
-            List<BackgroundAppItem> list = new List<BackgroundAppItem>(apps.Values);
+            Dictionary<string, BackgroundAppItem> trayApps = new Dictionary<string, BackgroundAppItem>(StringComparer.OrdinalIgnoreCase);
+
+            // 1. Scan real Windows NotifyIconSettings registry
+            try
+            {
+                using (RegistryKey root = Registry.CurrentUser.OpenSubKey(@"Control Panel\NotifyIconSettings"))
+                {
+                    if (root != null)
+                    {
+                        string[] subKeys = root.GetSubKeyNames();
+                        for (int k = 0; k < subKeys.Length; k++)
+                        {
+                            using (RegistryKey sk = root.OpenSubKey(subKeys[k]))
+                            {
+                                if (sk == null) continue;
+                                string rawPath = (sk.GetValue("ExecutablePath") as string) ?? "";
+                                string tip = (sk.GetValue("InitialTooltip") as string) ?? "";
+                                byte[] iconBytes = sk.GetValue("IconSnapshot") as byte[];
+
+                                string resolved = ResolveKnownFolder(rawPath);
+                                string exeName = IOPath.GetFileNameWithoutExtension(resolved);
+                                if (string.IsNullOrEmpty(exeName)) continue;
+
+                                if (string.Equals(exeName, "explorer", StringComparison.OrdinalIgnoreCase) ||
+                                    string.Equals(exeName, "MacOSTahoe", StringComparison.OrdinalIgnoreCase) ||
+                                    string.Equals(exeName, "Taskmgr", StringComparison.OrdinalIgnoreCase) ||
+                                    string.Equals(exeName, "Antigravity", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    continue;
+                                }
+
+                                List<Process> procs;
+                                if (runningMap.TryGetValue(exeName, out procs) && procs.Count > 0)
+                                {
+                                    long mem = 0;
+                                    IntPtr mainHwnd = IntPtr.Zero;
+                                    int mainPid = procs[0].Id;
+                                    for (int pIdx = 0; pIdx < procs.Count; pIdx++)
+                                    {
+                                        try
+                                        {
+                                            mem += procs[pIdx].WorkingSet64 / (1024 * 1024);
+                                            if (mainHwnd == IntPtr.Zero && procs[pIdx].MainWindowHandle != IntPtr.Zero)
+                                            {
+                                                mainHwnd = procs[pIdx].MainWindowHandle;
+                                                mainPid = procs[pIdx].Id;
+                                            }
+                                        }
+                                        catch { }
+                                    }
+
+                                    ImageSource icon = ImageFromPngBytes(iconBytes);
+                                    if (icon == null) icon = ExtractIconFromExe(resolved);
+                                    if (icon == null && ShellController.Instance != null)
+                                    {
+                                        icon = ShellController.Instance.ResolveDynamicIcon(exeName, (uint)mainPid);
+                                    }
+
+                                    string friendlyName = FormatFriendlyName(exeName, tip, resolved);
+
+                                    trayApps[exeName] = new BackgroundAppItem
+                                    {
+                                        Pid = mainPid,
+                                        ProcessName = exeName,
+                                        DisplayName = friendlyName,
+                                        ExePath = resolved,
+                                        MemoryMb = mem,
+                                        Icon = icon,
+                                        Hwnd = mainHwnd
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            // 2. Also check for active background user utilities (e.g. running apps with known paths)
+            string[] knownTrayUtilities = new string[] {
+                "MSIAfterburner", "sunshine", "wallpaper32", "wallpaper64", "DCv2",
+                "Fixnet", "AnyDesk", "steam", "Discord", "Telegram", "iMe", "DSX", "vlc",
+                "EpicGamesLauncher", "deluge", "qbittorrent", "Spotify", "RazerSynapse",
+                "LogiOptionsPlus", "Voicemeeter", "ShareX", "Lightshot", "PowerToys"
+            };
+
+            for (int u = 0; u < knownTrayUtilities.Length; u++)
+            {
+                string utilName = knownTrayUtilities[u];
+                if (trayApps.ContainsKey(utilName)) continue;
+
+                List<Process> procs;
+                if (runningMap.TryGetValue(utilName, out procs) && procs.Count > 0)
+                {
+                    long mem = 0;
+                    IntPtr mainHwnd = IntPtr.Zero;
+                    int mainPid = procs[0].Id;
+                    string exePath = "";
+                    for (int pIdx = 0; pIdx < procs.Count; pIdx++)
+                    {
+                        try
+                        {
+                            mem += procs[pIdx].WorkingSet64 / (1024 * 1024);
+                            if (mainHwnd == IntPtr.Zero && procs[pIdx].MainWindowHandle != IntPtr.Zero)
+                            {
+                                mainHwnd = procs[pIdx].MainWindowHandle;
+                                mainPid = procs[pIdx].Id;
+                            }
+                            if (string.IsNullOrEmpty(exePath))
+                            {
+                                exePath = procs[pIdx].MainModule.FileName;
+                            }
+                        }
+                        catch { }
+                    }
+
+                    ImageSource icon = ExtractIconFromExe(exePath);
+                    if (icon == null && ShellController.Instance != null)
+                    {
+                        icon = ShellController.Instance.ResolveDynamicIcon(utilName, (uint)mainPid);
+                    }
+
+                    string friendly = FormatFriendlyName(utilName, "", exePath);
+                    trayApps[utilName] = new BackgroundAppItem
+                    {
+                        Pid = mainPid,
+                        ProcessName = utilName,
+                        DisplayName = friendly,
+                        ExePath = exePath,
+                        MemoryMb = mem,
+                        Icon = icon,
+                        Hwnd = mainHwnd
+                    };
+                }
+            }
+
+            // Cleanup process objects
+            foreach (KeyValuePair<string, List<Process>> kv in runningMap)
+            {
+                for (int i = 0; i < kv.Value.Count; i++)
+                {
+                    try { kv.Value[i].Dispose(); } catch { }
+                }
+            }
+
+            List<BackgroundAppItem> list = new List<BackgroundAppItem>(trayApps.Values);
             list.Sort(delegate(BackgroundAppItem a, BackgroundAppItem b)
             {
                 return b.MemoryMb.CompareTo(a.MemoryMb);
             });
 
-            _countText.Text = string.Format("Найдено: {0} фоновых приложений", list.Count);
+            _countText.Text = string.Format("Найдено: {0} активных приложений в трее", list.Count);
 
             if (list.Count == 0)
             {
+                Border emptyBox = new Border
+                {
+                    Padding = new Thickness(16, 24, 16, 24),
+                    Background = new SolidColorBrush(Color.FromArgb(20, 255, 255, 255)),
+                    CornerRadius = new CornerRadius(12),
+                    Margin = new Thickness(0, 10, 0, 10)
+                };
                 TextBlock emptyText = new TextBlock
                 {
-                    Text = "Нет активных фоновых приложений",
+                    Text = "Нет активных фоновых программ в трее",
                     FontSize = 12,
-                    Foreground = new SolidColorBrush(Color.FromArgb(140, 255, 255, 255)),
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    Margin = new Thickness(0, 20, 0, 20)
+                    Foreground = new SolidColorBrush(Color.FromArgb(160, 235, 235, 245)),
+                    HorizontalAlignment = HorizontalAlignment.Center
                 };
-                _itemsListPanel.Children.Add(emptyText);
+                emptyBox.Child = emptyText;
+                _itemsListPanel.Children.Add(emptyBox);
                 return;
             }
 
@@ -481,7 +684,7 @@ namespace MacOSTahoe
             }
             else if (ShellController.Instance != null)
             {
-                img.Source = ShellController.Instance.GetIcon("finder.png");
+                img.Source = ShellController.Instance.GetIcon("settings.png");
             }
             Grid.SetColumn(img, 0);
             g.Children.Add(img);
@@ -498,7 +701,7 @@ namespace MacOSTahoe
             };
             TextBlock subText = new TextBlock
             {
-                Text = string.Format("{0}.exe • {1} МБ ОЗУ", app.ProcessName, app.MemoryMb),
+                Text = string.Format("{0}.exe • {1} МБ ОЗУ • В трее", app.ProcessName, app.MemoryMb),
                 FontSize = 10.5,
                 Foreground = new SolidColorBrush(Color.FromArgb(160, 235, 235, 245)),
                 Margin = new Thickness(0, 1, 0, 0),
@@ -594,7 +797,6 @@ namespace MacOSTahoe
                     return;
                 }
 
-                // If window handle was not cached, search windows of this PID
                 bool found = false;
                 NativeMethods.EnumWindows(delegate(IntPtr hWnd, IntPtr lp)
                 {
@@ -613,7 +815,6 @@ namespace MacOSTahoe
 
                 if (found) return;
 
-                // If app is fully hidden in tray, launching its executable signals the instance to show window
                 if (!string.IsNullOrEmpty(app.ExePath) && File.Exists(app.ExePath))
                 {
                     ShellController.RunProcess(app.ExePath, "");
