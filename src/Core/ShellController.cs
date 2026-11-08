@@ -49,6 +49,14 @@ namespace MacOSTahoe
         public CalendarWidgetWindow CalendarPopup;
         public AboutSystemWindow AboutWindow;
         public Window ScreenDimOverlay;
+        public StageManagerWindow StageManager;
+        public AppSwitcherWindow AppSwitcher;
+        public SplitViewDividerWindow SplitViewDivider;
+
+        public ImageSource DefaultAppIcon
+        {
+            get { return GetIcon("finder.png"); }
+        }
 
         public IntPtr LastExternalForegroundHwnd = IntPtr.Zero;
         public string ActiveAppName = "Рабочий стол";
@@ -1206,8 +1214,17 @@ namespace MacOSTahoe
             WindowSwitcher = new WindowSwitcherWindow();
             ControlCenter = new ControlCenterWindow();
             CalendarPopup = new CalendarWidgetWindow();
+            StageManager = new StageManagerWindow();
+            AppSwitcher = new AppSwitcherWindow();
+            SplitViewDivider = new SplitViewDividerWindow();
 
             ApplyModuleVisibility();
+
+            if (Config.EnableStageManager)
+            {
+                StageManager.RefreshShelf();
+                StageManager.Show();
+            }
 
             if (cliArgs != null)
             {
@@ -1279,6 +1296,7 @@ namespace MacOSTahoe
             if (Spotlight != null && Spotlight.IsVisible) Spotlight.Hide();
             if (Launchpad != null && Launchpad.IsVisible) Launchpad.Hide();
             if (WindowSwitcher != null && WindowSwitcher.IsVisible) WindowSwitcher.Hide();
+            if (AppSwitcher != null && AppSwitcher.IsVisible) AppSwitcher.Hide();
         }
 
         public void ToggleSpotlight()
@@ -1321,6 +1339,174 @@ namespace MacOSTahoe
                 CloseAllPopups();
                 WindowSwitcher.ShowAndRefresh();
             }
+        }
+
+        public void ToggleStageManager()
+        {
+            if (StageManager == null) StageManager = new StageManagerWindow();
+            Config.EnableStageManager = !Config.EnableStageManager;
+            SaveConfig();
+            if (Config.EnableStageManager)
+            {
+                StageManager.RefreshShelf();
+                StageManager.Show();
+            }
+            else
+            {
+                StageManager.Hide();
+            }
+            if (ControlCenter != null && ControlCenter.IsVisible)
+            {
+                ControlCenter.RefreshState();
+            }
+        }
+
+        public void ShowAppSwitcher(bool backward)
+        {
+            if (AppSwitcher == null) AppSwitcher = new AppSwitcherWindow();
+            AppSwitcher.ShowAndStep(backward);
+        }
+
+        public void CommitAppSwitcher()
+        {
+            if (AppSwitcher != null && AppSwitcher.IsVisible)
+            {
+                AppSwitcher.CommitSelection();
+            }
+        }
+
+        public void AppSwitcherQuit()
+        {
+            if (AppSwitcher != null && AppSwitcher.IsVisible)
+            {
+                AppSwitcher.QuitSelectedApp();
+            }
+        }
+
+        public void AppSwitcherHide()
+        {
+            if (AppSwitcher != null && AppSwitcher.IsVisible)
+            {
+                AppSwitcher.HideSelectedApp();
+            }
+        }
+
+        public void CancelAppSwitcher()
+        {
+            if (AppSwitcher != null && AppSwitcher.IsVisible)
+            {
+                AppSwitcher.Cancel();
+            }
+        }
+
+        public void EnterSplitView(IntPtr leftHwnd, IntPtr rightHwnd, double ratio)
+        {
+            if (SplitViewDivider == null) SplitViewDivider = new SplitViewDividerWindow();
+            SplitViewDivider.LeftHwnd = leftHwnd;
+            SplitViewDivider.RightHwnd = rightHwnd;
+            SplitViewDivider.SplitRatio = ratio;
+            SplitViewDivider.ApplyLayout();
+            SplitViewDivider.Show();
+        }
+
+        public void ExitSplitView()
+        {
+            if (SplitViewDivider != null && SplitViewDivider.IsVisible)
+            {
+                SplitViewDivider.Hide();
+            }
+        }
+
+        public void SnapActiveWindow(bool left)
+        {
+            IntPtr hwnd = NativeMethods.GetForegroundWindow();
+            if (hwnd == IntPtr.Zero) return;
+            double top = (Config.ShowTopBar && TopBar != null) ? 32.0 : 0.0;
+            double screenW = SystemParameters.PrimaryScreenWidth;
+            double screenH = SystemParameters.PrimaryScreenHeight;
+            double h = screenH - top;
+            double w = screenW / 2.0;
+            double x = left ? 0.0 : w;
+
+            NativeMethods.ShowWindow(hwnd, NativeMethods.SW_RESTORE);
+            NativeMethods.MoveWindow(hwnd, (int)x, (int)top, (int)w, (int)h, true);
+        }
+
+        public void SnapActiveWindowRatio(bool left, double ratio)
+        {
+            IntPtr hwnd = NativeMethods.GetForegroundWindow();
+            if (hwnd == IntPtr.Zero) return;
+            double top = (Config.ShowTopBar && TopBar != null) ? 32.0 : 0.0;
+            double screenW = SystemParameters.PrimaryScreenWidth;
+            double screenH = SystemParameters.PrimaryScreenHeight;
+            double h = screenH - top;
+            double w = screenW * ratio;
+            double x = left ? 0.0 : (screenW - w);
+
+            NativeMethods.ShowWindow(hwnd, NativeMethods.SW_RESTORE);
+            NativeMethods.MoveWindow(hwnd, (int)x, (int)top, (int)w, (int)h, true);
+        }
+
+        public void CreateNewSpace()
+        {
+            if (Config.Spaces == null) Config.Spaces = new List<string>();
+            int newIndex = Config.Spaces.Count + 1;
+            Config.Spaces.Add("Рабочий стол " + newIndex.ToString());
+            Config.CurrentSpaceIndex = Config.Spaces.Count - 1;
+            SaveConfig();
+
+            NativeMethods.keybd_event(0x5B, 0, 0, UIntPtr.Zero);
+            NativeMethods.keybd_event(0x11, 0, 0, UIntPtr.Zero);
+            NativeMethods.keybd_event(0x44, 0, 0, UIntPtr.Zero);
+            NativeMethods.keybd_event(0x44, 0, 2, UIntPtr.Zero);
+            NativeMethods.keybd_event(0x11, 0, 2, UIntPtr.Zero);
+            NativeMethods.keybd_event(0x5B, 0, 2, UIntPtr.Zero);
+        }
+
+        public void SwitchToSpace(int index)
+        {
+            if (Config.Spaces == null || index < 0 || index >= Config.Spaces.Count) return;
+            int current = Config.CurrentSpaceIndex;
+            if (current == index) return;
+
+            int diff = index - current;
+            Config.CurrentSpaceIndex = index;
+            SaveConfig();
+
+            byte key = diff > 0 ? (byte)0x27 : (byte)0x25;
+            int count = Math.Abs(diff);
+            for (int i = 0; i < count; i++)
+            {
+                NativeMethods.keybd_event(0x5B, 0, 0, UIntPtr.Zero);
+                NativeMethods.keybd_event(0x11, 0, 0, UIntPtr.Zero);
+                NativeMethods.keybd_event(key, 0, 0, UIntPtr.Zero);
+                NativeMethods.keybd_event(key, 0, 2, UIntPtr.Zero);
+                NativeMethods.keybd_event(0x11, 0, 2, UIntPtr.Zero);
+                NativeMethods.keybd_event(0x5B, 0, 2, UIntPtr.Zero);
+                Thread.Sleep(50);
+            }
+        }
+
+        public void CloseSpace(int index)
+        {
+            if (Config.Spaces == null || Config.Spaces.Count <= 1 || index < 0 || index >= Config.Spaces.Count) return;
+
+            if (Config.CurrentSpaceIndex != index)
+            {
+                SwitchToSpace(index);
+            }
+
+            NativeMethods.keybd_event(0x5B, 0, 0, UIntPtr.Zero);
+            NativeMethods.keybd_event(0x11, 0, 0, UIntPtr.Zero);
+            NativeMethods.keybd_event(0x73, 0, 0, UIntPtr.Zero);
+            NativeMethods.keybd_event(0x73, 0, 2, UIntPtr.Zero);
+            NativeMethods.keybd_event(0x11, 0, 2, UIntPtr.Zero);
+            NativeMethods.keybd_event(0x5B, 0, 2, UIntPtr.Zero);
+
+            Config.Spaces.RemoveAt(index);
+            if (Config.CurrentSpaceIndex >= Config.Spaces.Count)
+                Config.CurrentSpaceIndex = Config.Spaces.Count - 1;
+            SaveConfig();
         }
 
         public void ShowLauncherSettings()

@@ -38,6 +38,8 @@ namespace MacOSTahoe
         private TextBlock _widgetsSub;
         private Border _dockHideTile;
         private TextBlock _dockHideSub;
+        private Border _stageManagerTile;
+        private TextBlock _stageManagerSub;
 
         public ControlCenterWindow()
         {
@@ -48,7 +50,7 @@ namespace MacOSTahoe
             Topmost = true;
             ShowInTaskbar = false;
             Width = 350;
-            Height = 490;
+            Height = 555;
             Background = Brushes.Transparent;
             FontFamily = LiquidGlassTheme.UiFont;
 
@@ -132,6 +134,14 @@ namespace MacOSTahoe
             });
             _dockHideTile.Margin = new Thickness(0, 10, 0, 0);
             root.Children.Add(_dockHideTile);
+
+            _stageManagerTile = CreateActionTile("Постановщик (Stage Manager)", "Выключен", true, out _stageManagerSub, delegate()
+            {
+                ShellController.Instance.ToggleStageManager();
+                RefreshState();
+            });
+            _stageManagerTile.Margin = new Thickness(0, 10, 0, 0);
+            root.Children.Add(_stageManagerTile);
 
             Border dispCard = CreateGlassTile();
             dispCard.Margin = new Thickness(0, 10, 0, 0);
@@ -291,6 +301,15 @@ namespace MacOSTahoe
             _dockHideTile.Background = autoHide
                 ? new SolidColorBrush(Color.FromArgb(115, 10, 132, 255))
                 : new SolidColorBrush(Color.FromArgb(46, 255, 255, 255));
+
+            bool stageActive = ShellController.Instance.Config.EnableStageManager;
+            if (_stageManagerSub != null)
+            {
+                _stageManagerSub.Text = stageActive ? "Включён (боковая панель)" : "Выключен";
+                _stageManagerTile.Background = stageActive
+                    ? new SolidColorBrush(Color.FromArgb(115, 10, 132, 255))
+                    : new SolidColorBrush(Color.FromArgb(46, 255, 255, 255));
+            }
         }
     }
 

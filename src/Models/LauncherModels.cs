@@ -61,6 +61,9 @@ namespace MacOSTahoe
         public bool DockAutoHide { get; set; }
         public bool InterceptWinKey { get; set; }
         public bool IsDarkMode { get; set; }
+        public bool EnableStageManager { get; set; }
+        public List<string> Spaces { get; set; }
+        public int CurrentSpaceIndex { get; set; }
         public double DockIconSize { get; set; }
         public double DockZoomRange { get; set; }
         public string QuickNoteText { get; set; }
@@ -78,6 +81,9 @@ namespace MacOSTahoe
             DockAutoHide = true;
             InterceptWinKey = true;
             IsDarkMode = true;
+            EnableStageManager = false;
+            Spaces = new List<string> { "Рабочий стол 1", "Рабочий стол 2" };
+            CurrentSpaceIndex = 0;
             DockIconSize = 50.0;
             DockZoomRange = 26.0;
             QuickNoteText = "• Win — Все приложения\r\n• Alt+Пробел — Командный поиск\r\n• ПКМ по иконкам — Настройка Dock";

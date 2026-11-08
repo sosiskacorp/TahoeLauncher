@@ -134,6 +134,19 @@ namespace MacOSTahoe
                             }
                         }
                     }
+                    else if (isKeyUp)
+                    {
+                        if (vkCode == 0x12 || vkCode == 0xA4 || vkCode == 0xA5)
+                        {
+                            if (ShellController.Instance.AppSwitcher != null && ShellController.Instance.AppSwitcher.IsVisible)
+                            {
+                                Dispatcher.BeginInvoke(new Action(delegate
+                                {
+                                    ShellController.Instance.CommitAppSwitcher();
+                                }));
+                            }
+                        }
+                    }
                     else if (isKeyDown)
                     {
                         if (_winKeyDown)
@@ -169,6 +182,60 @@ namespace MacOSTahoe
                                 Dispatcher.BeginInvoke(new Action(delegate
                                 {
                                     ShellController.Instance.ToggleSpotlight();
+                                }));
+                                return (IntPtr)1;
+                            }
+                        }
+
+                        // Hotkey: F3 -> Mission Control
+                        if (vkCode == 0x72)
+                        {
+                            Dispatcher.BeginInvoke(new Action(delegate
+                            {
+                                ShellController.Instance.ToggleWindowSwitcher();
+                            }));
+                            return (IntPtr)1;
+                        }
+
+                        // Hotkey: Alt + Tab -> macOS Command+Tab App Switcher HUD
+                        if (vkCode == 0x09)
+                        {
+                            bool isAltDown = ((NativeMethods.GetAsyncKeyState(0x12) & 0x8000) != 0) || ((NativeMethods.GetAsyncKeyState(0xA4) & 0x8000) != 0) || ((NativeMethods.GetAsyncKeyState(0xA5) & 0x8000) != 0);
+                            if (isAltDown)
+                            {
+                                bool isShiftDown = ((NativeMethods.GetAsyncKeyState(0x10) & 0x8000) != 0) || ((NativeMethods.GetAsyncKeyState(0xA0) & 0x8000) != 0) || ((NativeMethods.GetAsyncKeyState(0xA1) & 0x8000) != 0);
+                                Dispatcher.BeginInvoke(new Action(delegate
+                                {
+                                    ShellController.Instance.ShowAppSwitcher(isShiftDown);
+                                }));
+                                return (IntPtr)1;
+                            }
+                        }
+
+                        // When App Switcher HUD is open: Q quits, H hides, Esc cancels
+                        if (ShellController.Instance.AppSwitcher != null && ShellController.Instance.AppSwitcher.IsVisible)
+                        {
+                            if (vkCode == 0x51) // 'Q'
+                            {
+                                Dispatcher.BeginInvoke(new Action(delegate
+                                {
+                                    ShellController.Instance.AppSwitcherQuit();
+                                }));
+                                return (IntPtr)1;
+                            }
+                            if (vkCode == 0x48) // 'H'
+                            {
+                                Dispatcher.BeginInvoke(new Action(delegate
+                                {
+                                    ShellController.Instance.AppSwitcherHide();
+                                }));
+                                return (IntPtr)1;
+                            }
+                            if (vkCode == 0x1B) // Esc
+                            {
+                                Dispatcher.BeginInvoke(new Action(delegate
+                                {
+                                    ShellController.Instance.CancelAppSwitcher();
                                 }));
                                 return (IntPtr)1;
                             }
@@ -672,7 +739,8 @@ namespace MacOSTahoe
             list.Add(CreateDropdownItem("Параметры Windows...", "Win+I", delegate() { ShellController.RunProcess("explorer.exe", "ms-settings:"); }));
             list.Add(CreateDropdownItem("Microsoft Store...", "", delegate() { ShellController.RunProcess("explorer.exe", "ms-windows-store:"); }));
             list.Add(CreateDropdownSeparator());
-            list.Add(CreateDropdownItem("Обзор активных окон", "", delegate() { ShellController.Instance.ToggleWindowSwitcher(); }));
+            list.Add(CreateDropdownItem("Mission Control (все окна)", "F3", delegate() { ShellController.Instance.ToggleWindowSwitcher(); }));
+            list.Add(CreateDropdownItem("Постановщик (Stage Manager)", "", delegate() { ShellController.Instance.ToggleStageManager(); }));
             list.Add(CreateDropdownItem("Диспетчер задач...", "Ctrl+Shift+Esc", delegate() { ShellController.RunProcess("taskmgr.exe", ""); }));
             list.Add(CreateDropdownItem("Закрыть активное окно", "Alt+F4", delegate()
             {
@@ -835,7 +903,18 @@ namespace MacOSTahoe
         private List<FrameworkElement> BuildWindowMenuItems()
         {
             List<FrameworkElement> list = new List<FrameworkElement>();
-            list.Add(CreateDropdownItem("Обзор всех окон...", "", delegate() { ShellController.Instance.ToggleWindowSwitcher(); }));
+            list.Add(CreateDropdownItem("Mission Control (все окна)", "F3", delegate() { ShellController.Instance.ToggleWindowSwitcher(); }));
+            list.Add(CreateDropdownItem("Постановщик (Stage Manager)", "", delegate() { ShellController.Instance.ToggleStageManager(); }));
+            list.Add(CreateDropdownItem("Переключатель программ...", "Alt+Tab", delegate() { ShellController.Instance.ShowAppSwitcher(false); }));
+            list.Add(CreateDropdownSeparator());
+            list.Add(CreateDropdownItem("Разделение экрана (Split View)...", "", delegate()
+            {
+                List<OpenWindowEntry> wins = ShellController.Instance.GetOpenApplicationWindows();
+                if (wins.Count >= 2)
+                    ShellController.Instance.EnterSplitView(wins[0].Hwnd, wins[1].Hwnd, 0.5);
+            }));
+            list.Add(CreateDropdownItem("Поместить окно слева", "◧", delegate() { ShellController.Instance.SnapActiveWindow(true); }));
+            list.Add(CreateDropdownItem("Поместить окно справа", "◨", delegate() { ShellController.Instance.SnapActiveWindow(false); }));
             list.Add(CreateDropdownSeparator());
             list.Add(CreateDropdownItem("Свернуть окно", "", delegate()
             {
