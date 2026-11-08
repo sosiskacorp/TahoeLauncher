@@ -95,6 +95,8 @@ namespace MacOSTahoe
                     NativeMethods.RestoreAllNativeShell();
                 };
 
+                NetworkHelper.Initialize();
+                BluetoothHelper.Initialize();
                 ShellController controller = new ShellController();
                 controller.Start(args);
                 app.Run();

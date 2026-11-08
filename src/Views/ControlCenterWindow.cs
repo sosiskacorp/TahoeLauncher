@@ -1,30 +1,11 @@
-﻿using System;
-using System.Collections.Generic;
+using System;
 using System.Diagnostics;
-using System.Globalization;
-using System.IO;
-using System.Reflection;
-using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.ComTypes;
-using System.Text;
-using System.Text.RegularExpressions;
-using System.Threading;
-using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
-using System.Windows.Data;
 using System.Windows.Input;
-using System.Windows.Interop;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
-using System.Windows.Shapes;
-using System.Windows.Threading;
-using Microsoft.Win32;
-using IOPath = System.IO.Path;
-using WpfPath = System.Windows.Shapes.Path;
 
 namespace MacOSTahoe
 {
@@ -43,8 +24,17 @@ namespace MacOSTahoe
         private TranslateTransform _translateTransform;
         private Border _card;
         private bool _isClosing = false;
+
+        // Connectivity Subtitles & Dots
+        private TextBlock _connWifiSub;
+        private Border _connWifiDot;
+        private TextBlock _connBtSub;
+        private Border _connBtDot;
+
+        // Miniplayer Elements
         private TextBlock _ccMediaSource;
         private TextBlock _ccMediaStatus;
+        private Image _ccCoverImage;
         private TextBlock _ccCoverIcon;
         private TextBlock _ccTrackTitle;
         private TextBlock _ccTrackArtist;
@@ -52,7 +42,7 @@ namespace MacOSTahoe
         private TextBlock _ccTimeTotal;
         private ProgressBar _ccProgressBar;
         private Border _ccPlayPauseChip;
-        private TextBlock _connWifiSub;
+        private TextBlock _ccPlayPauseText;
 
         public ControlCenterWindow()
         {
@@ -63,7 +53,8 @@ namespace MacOSTahoe
             Topmost = true;
             ShowInTaskbar = false;
             Width = 350;
-            Height = 615;
+            SizeToContent = SizeToContent.Height;
+            MaxHeight = SystemParameters.WorkArea.Height - 35;
             Background = Brushes.Transparent;
             FontFamily = LiquidGlassTheme.UiFont;
 
@@ -78,6 +69,16 @@ namespace MacOSTahoe
             {
                 if (IsVisible) Dispatcher.BeginInvoke(new Action(UpdateMiniplayerUI));
             };
+
+            NetworkHelper.WifiStateChanged += delegate
+            {
+                if (IsVisible) Dispatcher.BeginInvoke(new Action(RefreshState));
+            };
+
+            BluetoothHelper.StateChanged += delegate
+            {
+                if (IsVisible) Dispatcher.BeginInvoke(new Action(RefreshState));
+            };
         }
 
         private void BuildUI()
@@ -87,11 +88,11 @@ namespace MacOSTahoe
             _translateTransform = new TranslateTransform(0, 0);
             _card.RenderTransform = _translateTransform;
             card.Margin = new Thickness(12);
-            card.CornerRadius = new CornerRadius(24);
+            card.CornerRadius = new CornerRadius(22);
             card.Background = LiquidGlassTheme.CreateGlassBrush(226, 240);
             card.BorderBrush = LiquidGlassTheme.CreateSpecularBorderBrush();
             card.BorderThickness = new Thickness(1);
-            card.Padding = new Thickness(14);
+            card.Padding = new Thickness(12);
             card.Effect = new DropShadowEffect
             {
                 BlurRadius = 28,
@@ -100,32 +101,70 @@ namespace MacOSTahoe
                 Color = Colors.Black
             };
 
+            ScrollViewer scroll = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Hidden,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                Focusable = false,
+                Background = Brushes.Transparent,
+                PanningMode = PanningMode.VerticalOnly
+            };
+
             StackPanel root = new StackPanel();
 
+            // 1. TOP ROW: Connectivity + Actions (Dark mode, Desktop icons)
             Grid topGrid = new Grid();
             topGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            topGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) });
+            topGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(8) });
             topGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
+            // Connectivity Card
             Border connCard = CreateGlassTile();
-            connCard.Padding = new Thickness(12, 10, 12, 10);
+            connCard.Padding = new Thickness(10, 8, 10, 8);
             StackPanel connStack = new StackPanel();
-            Border wifiRow = (Border)CreateConnRow("Сеть", "Подключено", true, delegate() { ShellController.Instance.ToggleNetworkMenu(); });
-            _connWifiSub = ((StackPanel)((StackPanel)wifiRow.Child).Children[1]).Children[1] as TextBlock;
+
+            // Wi-Fi / Network Row
+            Border wifiRow = CreateConnRow("Сеть", "Проверка...", true, "📶", out _connWifiSub, out _connWifiDot, delegate()
+            {
+                ShellController.Instance.ToggleNetworkMenu();
+            });
             connStack.Children.Add(wifiRow);
-            connStack.Children.Add(CreateConnRow("Bluetooth", "Вкл.", true, delegate() { ShellController.RunProcess("explorer.exe", "ms-settings:bluetooth"); }));
-            connStack.Children.Add(CreateConnRow("Лаунчер", "Настройки", true, delegate() { Hide(); ShellController.Instance.ShowLauncherSettings(); }));
+
+            // Bluetooth Row
+            Border btRow = CreateConnRow("Bluetooth", "Вкл.", true, "ᛒ", out _connBtSub, out _connBtDot, delegate()
+            {
+                BluetoothHelper.ToggleBluetooth();
+                RefreshState();
+            });
+            btRow.MouseRightButtonDown += delegate(object s, MouseButtonEventArgs e)
+            {
+                e.Handled = true;
+                ShellController.RunProcess("explorer.exe", "ms-settings:bluetooth");
+            };
+            connStack.Children.Add(btRow);
+
+            // Launcher settings
+            TextBlock dummySub;
+            Border dummyDot;
+            Border launcherRow = CreateConnRow("Лаунчер", "Параметры", true, "⚙", out dummySub, out dummyDot, delegate()
+            {
+                Hide();
+                ShellController.Instance.ShowLauncherSettings();
+            });
+            connStack.Children.Add(launcherRow);
+
             connCard.Child = connStack;
             Grid.SetColumn(connCard, 0);
             topGrid.Children.Add(connCard);
 
+            // Right Column: Dark mode & Desktop icons
             StackPanel rightCol = new StackPanel();
             _darkModeTile = CreateActionTile("Оформление", "Тёмная тема", true, out _darkModeSub, delegate()
             {
                 ShellController.Instance.ToggleDarkMode();
                 RefreshState();
             });
-            _darkModeTile.Margin = new Thickness(0, 0, 0, 10);
+            _darkModeTile.Margin = new Thickness(0, 0, 0, 8);
             rightCol.Children.Add(_darkModeTile);
 
             _iconsTile = CreateActionTile("Значки стола", "Показаны", true, out _iconsSub, delegate()
@@ -139,6 +178,7 @@ namespace MacOSTahoe
             topGrid.Children.Add(rightCol);
             root.Children.Add(topGrid);
 
+            // 2. TOGGLE TILES
             _widgetsTile = CreateActionTile("Виджеты рабочего стола", "Включены", true, out _widgetsSub, delegate()
             {
                 ShellController.Instance.Config.ShowDesktopWidgets = !ShellController.Instance.Config.ShowDesktopWidgets;
@@ -146,7 +186,7 @@ namespace MacOSTahoe
                 ShellController.Instance.ApplyModuleVisibility();
                 RefreshState();
             });
-            _widgetsTile.Margin = new Thickness(0, 10, 0, 0);
+            _widgetsTile.Margin = new Thickness(0, 8, 0, 0);
             root.Children.Add(_widgetsTile);
 
             _dockHideTile = CreateActionTile("Режим Dock", "Скрывать в полноэкранных окнах", true, out _dockHideSub, delegate()
@@ -155,7 +195,7 @@ namespace MacOSTahoe
                 ShellController.Instance.SaveConfig();
                 RefreshState();
             });
-            _dockHideTile.Margin = new Thickness(0, 10, 0, 0);
+            _dockHideTile.Margin = new Thickness(0, 8, 0, 0);
             root.Children.Add(_dockHideTile);
 
             _stageManagerTile = CreateActionTile("Постановщик (Stage Manager)", "Выключен", true, out _stageManagerSub, delegate()
@@ -163,7 +203,7 @@ namespace MacOSTahoe
                 ShellController.Instance.ToggleStageManager();
                 RefreshState();
             });
-            _stageManagerTile.Margin = new Thickness(0, 10, 0, 0);
+            _stageManagerTile.Margin = new Thickness(0, 8, 0, 0);
             root.Children.Add(_stageManagerTile);
 
             TextBlock bgSub;
@@ -172,20 +212,21 @@ namespace MacOSTahoe
                 Hide();
                 ShellController.Instance.ToggleBackgroundTasks();
             });
-            bgTasksTile.Margin = new Thickness(0, 10, 0, 0);
+            bgTasksTile.Margin = new Thickness(0, 8, 0, 0);
             root.Children.Add(bgTasksTile);
 
+            // 3. BRIGHTNESS SLIDER
             Border dispCard = CreateGlassTile();
-            dispCard.Margin = new Thickness(0, 10, 0, 0);
-            dispCard.Padding = new Thickness(12, 10, 12, 10);
+            dispCard.Margin = new Thickness(0, 8, 0, 0);
+            dispCard.Padding = new Thickness(12, 8, 12, 8);
             StackPanel dispStack = new StackPanel();
             dispStack.Children.Add(new TextBlock
             {
                 Text = "Яркость экрана",
-                FontSize = 12,
+                FontSize = 11.5,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Brushes.White,
-                Margin = new Thickness(0, 0, 0, 6)
+                Margin = new Thickness(0, 0, 0, 4)
             });
             Slider brightSlider = new Slider
             {
@@ -203,9 +244,9 @@ namespace MacOSTahoe
             dispCard.Child = dispStack;
             root.Children.Add(dispCard);
 
-            // --- NOW PLAYING MINIPLAYER ---
+            // 4. NOW PLAYING MINIPLAYER CARD
             Border mediaCard = CreateGlassTile();
-            mediaCard.Margin = new Thickness(0, 10, 0, 0);
+            mediaCard.Margin = new Thickness(0, 8, 0, 0);
             mediaCard.Padding = new Thickness(12, 10, 12, 10);
 
             StackPanel mediaStack = new StackPanel();
@@ -218,7 +259,7 @@ namespace MacOSTahoe
             _ccMediaSource = new TextBlock
             {
                 Text = "🎵 Яндекс Музыка",
-                FontSize = 11,
+                FontSize = 10.5,
                 FontWeight = FontWeights.Bold,
                 Foreground = LiquidGlassTheme.AccentBlueBrush
             };
@@ -228,7 +269,7 @@ namespace MacOSTahoe
             _ccMediaStatus = new TextBlock
             {
                 Text = "Сейчас играет",
-                FontSize = 10,
+                FontSize = 9.5,
                 Foreground = new SolidColorBrush(Color.FromArgb(160, 235, 235, 245))
             };
             Grid.SetColumn(_ccMediaStatus, 1);
@@ -245,17 +286,27 @@ namespace MacOSTahoe
                 Width = 40,
                 Height = 40,
                 CornerRadius = new CornerRadius(10),
-                Background = new SolidColorBrush(Color.FromArgb(50, 255, 255, 255)),
+                Background = new SolidColorBrush(Color.FromArgb(45, 255, 255, 255)),
+                ClipToBounds = true,
                 HorizontalAlignment = HorizontalAlignment.Left
             };
+            Grid coverGrid = new Grid();
             _ccCoverIcon = new TextBlock
             {
                 Text = "🎵",
-                FontSize = 20,
+                FontSize = 18,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
-            coverBorder.Child = _ccCoverIcon;
+            _ccCoverImage = new Image
+            {
+                Stretch = Stretch.UniformToFill,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            coverGrid.Children.Add(_ccCoverIcon);
+            coverGrid.Children.Add(_ccCoverImage);
+            coverBorder.Child = coverGrid;
             Grid.SetColumn(coverBorder, 0);
             trackRow.Children.Add(coverBorder);
 
@@ -263,7 +314,7 @@ namespace MacOSTahoe
             _ccTrackTitle = new TextBlock
             {
                 Text = "Музыка не играет",
-                FontSize = 12.5,
+                FontSize = 12,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Brushes.White,
                 TextTrimming = TextTrimming.CharacterEllipsis
@@ -274,7 +325,7 @@ namespace MacOSTahoe
                 FontSize = 10.5,
                 Foreground = new SolidColorBrush(Color.FromArgb(180, 235, 235, 245)),
                 TextTrimming = TextTrimming.CharacterEllipsis,
-                Margin = new Thickness(0, 2, 0, 0)
+                Margin = new Thickness(0, 1, 0, 0)
             };
             trackInfo.Children.Add(_ccTrackTitle);
             trackInfo.Children.Add(_ccTrackArtist);
@@ -288,7 +339,7 @@ namespace MacOSTahoe
             timelineGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             timelineGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            _ccTimeElapsed = new TextBlock { Text = "00:00", FontSize = 9.5, Foreground = new SolidColorBrush(Color.FromArgb(160, 235, 235, 245)) };
+            _ccTimeElapsed = new TextBlock { Text = "00:00", FontSize = 9.5, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Color.FromArgb(160, 235, 235, 245)) };
             Grid.SetColumn(_ccTimeElapsed, 0);
             timelineGrid.Children.Add(_ccTimeElapsed);
 
@@ -296,17 +347,18 @@ namespace MacOSTahoe
             {
                 Height = 4,
                 Minimum = 0,
-                Maximum = 210,
-                Value = 42,
+                Maximum = 180,
+                Value = 0,
                 Margin = new Thickness(6, 0, 6, 0),
                 Foreground = LiquidGlassTheme.AccentBlueBrush,
                 Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
-                BorderThickness = new Thickness(0)
+                BorderThickness = new Thickness(0),
+                VerticalAlignment = VerticalAlignment.Center
             };
             Grid.SetColumn(_ccProgressBar, 1);
             timelineGrid.Children.Add(_ccProgressBar);
 
-            _ccTimeTotal = new TextBlock { Text = "03:30", FontSize = 9.5, Foreground = new SolidColorBrush(Color.FromArgb(160, 235, 235, 245)) };
+            _ccTimeTotal = new TextBlock { Text = "03:00", FontSize = 9.5, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Color.FromArgb(160, 235, 235, 245)) };
             Grid.SetColumn(_ccTimeTotal, 2);
             timelineGrid.Children.Add(_ccTimeTotal);
             mediaStack.Children.Add(timelineGrid);
@@ -314,7 +366,8 @@ namespace MacOSTahoe
             // Playback controls row
             StackPanel controls = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
             controls.Children.Add(CreateMediaChip("⏮", delegate() { NowPlayingManager.Instance.PreviousTrack(); }));
-            _ccPlayPauseChip = CreateMediaChip("⏯ Пауза/Пуск", delegate() { NowPlayingManager.Instance.PlayPause(); });
+            _ccPlayPauseChip = CreateMediaChip("▶ Пуск", delegate() { NowPlayingManager.Instance.PlayPause(); });
+            _ccPlayPauseText = _ccPlayPauseChip.Child as TextBlock;
             controls.Children.Add(_ccPlayPauseChip);
             controls.Children.Add(CreateMediaChip("⏭", delegate() { NowPlayingManager.Instance.NextTrack(); }));
             mediaStack.Children.Add(controls);
@@ -322,24 +375,25 @@ namespace MacOSTahoe
             mediaCard.Child = mediaStack;
             root.Children.Add(mediaCard);
 
-            card.Child = root;
+            scroll.Content = root;
+            card.Child = scroll;
             Content = card;
         }
 
         private Border CreateGlassTile()
         {
             Border b = new Border();
-            b.CornerRadius = new CornerRadius(16);
+            b.CornerRadius = new CornerRadius(14);
             b.Background = new SolidColorBrush(Color.FromArgb(46, 255, 255, 255));
             b.BorderBrush = new SolidColorBrush(Color.FromArgb(38, 255, 255, 255));
             b.BorderThickness = new Thickness(1);
             return b;
         }
 
-        private FrameworkElement CreateConnRow(string title, string sub, bool active, Action onClick)
+        private Border CreateConnRow(string title, string sub, bool active, string iconChar, out TextBlock subBlock, out Border dotBlock, Action onClick)
         {
             Border row = new Border();
-            row.CornerRadius = new CornerRadius(10);
+            row.CornerRadius = new CornerRadius(9);
             row.Padding = new Thickness(4, 5, 4, 5);
             row.Background = Brushes.Transparent;
             row.Cursor = Cursors.Hand;
@@ -353,9 +407,10 @@ namespace MacOSTahoe
                 Background = active ? LiquidGlassTheme.AccentBlueBrush : new SolidColorBrush(Color.FromArgb(60, 255, 255, 255)),
                 Margin = new Thickness(0, 0, 8, 0)
             };
+            dotBlock = dot;
             TextBlock iconTxt = new TextBlock
             {
-                Text = title.Substring(0, 1),
+                Text = iconChar,
                 Foreground = Brushes.White,
                 FontWeight = FontWeights.Bold,
                 FontSize = 11,
@@ -367,27 +422,36 @@ namespace MacOSTahoe
 
             StackPanel labels = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             labels.Children.Add(new TextBlock { Text = title, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White });
-            labels.Children.Add(new TextBlock { Text = sub, FontSize = 10.5, Foreground = new SolidColorBrush(Color.FromArgb(170, 235, 235, 245)) });
+            subBlock = new TextBlock { Text = sub, FontSize = 10, Foreground = new SolidColorBrush(Color.FromArgb(170, 235, 235, 245)), TextTrimming = TextTrimming.CharacterEllipsis };
+            labels.Children.Add(subBlock);
             sp.Children.Add(labels);
 
             row.Child = sp;
-            row.MouseLeftButtonDown += delegate { if (onClick != null) onClick(); };
+            row.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
+            {
+                e.Handled = true;
+                if (onClick != null) onClick();
+            };
             return row;
         }
 
         private Border CreateActionTile(string title, string sub, bool active, out TextBlock subBlock, Action onClick)
         {
             Border tile = CreateGlassTile();
-            tile.Padding = new Thickness(12, 9, 12, 9);
+            tile.Padding = new Thickness(12, 8, 12, 8);
             tile.Cursor = Cursors.Hand;
 
             StackPanel sp = new StackPanel();
-            sp.Children.Add(new TextBlock { Text = title, FontSize = 12.5, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White });
-            subBlock = new TextBlock { Text = sub, FontSize = 11, Foreground = new SolidColorBrush(Color.FromArgb(185, 235, 235, 245)), Margin = new Thickness(0, 2, 0, 0) };
+            sp.Children.Add(new TextBlock { Text = title, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White });
+            subBlock = new TextBlock { Text = sub, FontSize = 10.5, Foreground = new SolidColorBrush(Color.FromArgb(185, 235, 235, 245)), Margin = new Thickness(0, 1, 0, 0) };
             sp.Children.Add(subBlock);
             tile.Child = sp;
 
-            tile.MouseLeftButtonDown += delegate { if (onClick != null) onClick(); };
+            tile.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
+            {
+                e.Handled = true;
+                if (onClick != null) onClick();
+            };
             return tile;
         }
 
@@ -399,11 +463,14 @@ namespace MacOSTahoe
             chip.Padding = new Thickness(9, 5, 9, 5);
             chip.Margin = new Thickness(3, 0, 3, 0);
             chip.Cursor = Cursors.Hand;
-            chip.Child = new TextBlock { Text = text, Foreground = Brushes.White, FontSize = 11.5, FontWeight = FontWeights.SemiBold };
-            chip.MouseLeftButtonDown += delegate { if (onClick != null) onClick(); };
+            chip.Child = new TextBlock { Text = text, Foreground = Brushes.White, FontSize = 11, FontWeight = FontWeights.SemiBold };
+            chip.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
+            {
+                e.Handled = true;
+                if (onClick != null) onClick();
+            };
             return chip;
         }
-
 
         public void ShowAnimated()
         {
@@ -429,7 +496,6 @@ namespace MacOSTahoe
             });
         }
 
-
         private void UpdateMiniplayerUI()
         {
             NowPlayingInfo info = NowPlayingManager.Instance.CurrentInfo;
@@ -438,9 +504,24 @@ namespace MacOSTahoe
                 if (_ccMediaSource != null) _ccMediaSource.Text = "🎵 " + info.SourceApp;
                 if (_ccTrackTitle != null) _ccTrackTitle.Text = info.Title;
                 if (_ccTrackArtist != null) _ccTrackArtist.Text = info.Artist;
-                if (_ccPlayPauseChip != null && _ccPlayPauseChip.Child is TextBlock)
+                if (_ccMediaStatus != null) _ccMediaStatus.Text = info.IsPlaying ? "Сейчас играет" : "Пауза";
+                if (_ccPlayPauseText != null)
                 {
-                    ((TextBlock)_ccPlayPauseChip.Child).Text = info.IsPlaying ? "⏸ Пауза" : "▶ Пуск";
+                    _ccPlayPauseText.Text = info.IsPlaying ? "⏸ Пауза" : "▶ Пуск";
+                }
+
+                // Cover Image
+                if (info.CoverImage != null)
+                {
+                    _ccCoverImage.Source = info.CoverImage;
+                    _ccCoverImage.Visibility = Visibility.Visible;
+                    _ccCoverIcon.Visibility = Visibility.Collapsed;
+                }
+                else
+                {
+                    _ccCoverImage.Source = null;
+                    _ccCoverImage.Visibility = Visibility.Collapsed;
+                    _ccCoverIcon.Visibility = Visibility.Visible;
                 }
 
                 if (_ccProgressBar != null && _ccTimeElapsed != null && _ccTimeTotal != null)
@@ -490,17 +571,50 @@ namespace MacOSTahoe
                     : new SolidColorBrush(Color.FromArgb(46, 255, 255, 255));
             }
 
+            // Network Subtitle & Dot
             NetworkStatusInfo net = NetworkHelper.GetCurrentStatus();
             if (_connWifiSub != null)
             {
-                _connWifiSub.Text = net.IsConnected ? (net.Kind == NetworkKind.Ethernet ? "Ethernet • Подключено" : "Wi-Fi • Подключено") : "Отключено";
+                if (net.IsConnected)
+                {
+                    if (net.Kind == NetworkKind.WiFi)
+                    {
+                        _connWifiSub.Text = !string.IsNullOrEmpty(net.Ssid) ? ("Wi-Fi: " + net.Ssid) : "Wi-Fi • Подключено";
+                    }
+                    else if (net.Kind == NetworkKind.Ethernet)
+                    {
+                        _connWifiSub.Text = "Ethernet (Провод)";
+                    }
+                    else
+                    {
+                        _connWifiSub.Text = net.InterfaceName + " • В сети";
+                    }
+                }
+                else
+                {
+                    _connWifiSub.Text = NetworkHelper.IsWifiEnabled ? "Сеть отключена" : "Wi-Fi выключен";
+                }
+            }
+            if (_connWifiDot != null)
+            {
+                _connWifiDot.Background = (net.IsConnected || NetworkHelper.IsWifiEnabled)
+                    ? LiquidGlassTheme.AccentBlueBrush
+                    : new SolidColorBrush(Color.FromArgb(60, 255, 255, 255));
+            }
+
+            // Bluetooth Subtitle & Dot
+            if (_connBtSub != null)
+            {
+                _connBtSub.Text = BluetoothHelper.IsBluetoothEnabled ? "Вкл." : "Выкл.";
+            }
+            if (_connBtDot != null)
+            {
+                _connBtDot.Background = BluetoothHelper.IsBluetoothEnabled
+                    ? LiquidGlassTheme.AccentBlueBrush
+                    : new SolidColorBrush(Color.FromArgb(60, 255, 255, 255));
             }
 
             UpdateMiniplayerUI();
         }
     }
-
-    // =========================================================================
-    // 5. OMNI-LAUNCHER & COMMAND PALETTE (Alt+Space / Быстрый поиск)
-    // =========================================================================
 }
